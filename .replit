@@ -1,0 +1,32 @@
+modules = ["nodejs-24", "python-base-3.13"]
+[nix]
+channel = "stable-25_05"
+packages = ["unzip"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "TV Room"
+
+[[workflows.workflow]]
+name = "TV Room"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm start"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
