@@ -113,11 +113,11 @@ export function HomeMusic() {
     void loadTracks()
   }
 
-  const playTrack = async (track: Track, full = false) => {
+  const playTrack = async (track: Track, full = true) => {
     const key = trackKey(track)
     const audio = audioRef.current
     if (!audio) return
-    if (!full && activeTrack && trackKey(activeTrack) === key && !audio.paused) {
+    if (activeTrack && trackKey(activeTrack) === key && !audio.paused) {
       audio.pause()
       setIsPlaying(false)
       return
@@ -289,14 +289,14 @@ export function HomeMusic() {
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate text-[13px] font-semibold leading-tight">{track.trackName}</h3>
                       <p className="mt-1 truncate text-[11px] text-muted-foreground">{track.artistName}</p>
-                      <span className="mt-1 inline-flex rounded-full bg-secondary/55 px-1.5 py-0.5 text-[9px] font-semibold text-secondary-foreground">{track.isPreview === false ? "Song" : "Preview"}</span>
+                      <span className="mt-1 inline-flex rounded-full bg-secondary/55 px-1.5 py-0.5 text-[9px] font-semibold text-secondary-foreground">Full-song lookup</span>
                     </div>
-                    <Button type="button" variant={current && isPlaying ? "default" : "outline"} onClick={() => void playTrack(track)} disabled={pendingPlay === key} className="h-9 w-9 shrink-0 rounded-full p-0" aria-label={`${current && isPlaying ? "Pause" : "Play preview"} ${track.trackName}`}>
+                    <Button type="button" variant={current && isPlaying ? "default" : "outline"} onClick={() => void playTrack(track)} disabled={pendingPlay === key} className="h-9 w-9 shrink-0 rounded-full p-0" aria-label={`${current && isPlaying ? "Pause" : "Play full song"} ${track.trackName}`}>
                       {pendingPlay === key ? <LoaderCircle className="h-4 w-4 animate-spin" /> : current && isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4 fill-current" />}
                     </Button>
                   </div>
                   <div className="mt-1 flex min-h-7 items-center justify-between pl-[1.35rem]">
-                    {track.isPreview !== false ? <span className="text-[9px] text-muted-foreground">Apple preview · ~30 sec</span> : <span className="text-[9px] text-muted-foreground">Search result audio</span>}
+                    <span className="text-[9px] text-muted-foreground">Full-length audio</span>
                     <div className="flex items-center gap-0.5">
                       <button type="button" onClick={() => void playTrack(track, true)} disabled={pendingPlay === key} className="rounded-md px-1.5 py-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50">Full song</button>
                       <button type="button" onClick={() => void downloadTrack(track)} disabled={pendingDownload !== null} aria-label={`Download full song ${track.trackName}`} title="Download full song" className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50">

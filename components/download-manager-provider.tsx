@@ -1,4 +1,5 @@
 "use client"
+import { readApiJson } from "@/lib/client-json"
 
 import type React from "react"
 import { createContext, useContext, useState, useRef, useCallback } from "react"
@@ -129,7 +130,7 @@ export function DownloadManagerProvider({ children }: { children: React.ReactNod
     try {
       const action = format === "mp3" ? "download-mp3" : "download-mp4"
       const response = await fetch(`/api/music?action=${action}&url=${encodeURIComponent(url)}`)
-      const data = await response.json()
+      const data = await readApiJson(response)
 
       if (data.success && data.downloadUrl) {
         // Trigger direct download to user's device
@@ -146,7 +147,7 @@ export function DownloadManagerProvider({ children }: { children: React.ReactNod
       } else {
         // Try YouTube API as fallback
         const ytResponse = await fetch(`/api/youtube?action=download&url=${encodeURIComponent(url)}&format=${format}`)
-        const ytData = await ytResponse.json()
+        const ytData = await readApiJson(ytResponse)
         
         if (ytData.success && ytData.downloadUrl) {
           directDownload(ytData.downloadUrl, `${title || "download"}.${format}`)
@@ -170,7 +171,7 @@ export function DownloadManagerProvider({ children }: { children: React.ReactNod
     try {
       // Search movies
       const response = await fetch(`/api/movie-download?action=search&query=${encodeURIComponent(title)}&limit=5`)
-      const data = await response.json()
+      const data = await readApiJson(response)
 
       if (!data.success && data.error) {
         alert(`Search failed: ${data.error}`)
@@ -185,7 +186,7 @@ export function DownloadManagerProvider({ children }: { children: React.ReactNod
           const downloadResponse = await fetch(
             `/api/movie-download?action=download&url=${encodeURIComponent(movie.downloadUrl)}`
           )
-          const downloadData = await downloadResponse.json()
+          const downloadData = await readApiJson(downloadResponse)
 
           if (downloadData.success && downloadData.downloadUrl) {
             // Trigger direct download to user's device

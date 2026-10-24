@@ -1,3 +1,4 @@
+import { readApiJson } from "../client-json"
 // YouTube download functionality using ytdl-core approach
 // Note: In production, you'd use a backend service for this
 
@@ -40,7 +41,7 @@ export async function getVideoInfo(videoId: string): Promise<YouTubeVideo | null
       throw new Error("Video not found")
     }
 
-    const data = await response.json()
+    const data = await readApiJson(response)
 
     return {
       id: videoId,
@@ -111,7 +112,7 @@ export async function downloadVideo(videoId: string, format: DownloadFormat): Pr
 export async function isYouTubeShort(videoId: string): Promise<boolean> {
   try {
     const response = await fetch(`/api/youtube?action=video-details&videoId=${videoId}`)
-    const data = await response.json()
+    const data = await readApiJson(response)
 
     if (data.duration) {
       // Parse ISO 8601 duration (PT1M30S format)
@@ -140,7 +141,7 @@ export async function searchYouTube(query: string, maxResults = 20): Promise<You
       `/api/youtube?action=search&query=${encodeURIComponent(query)}&maxResults=${maxResults}`,
     )
 
-    const data = await response.json()
+    const data = await readApiJson(response)
 
     if (!data.items) return []
 
@@ -164,7 +165,7 @@ export async function searchYouTube(query: string, maxResults = 20): Promise<You
 export async function getTrendingYouTubeVideos(): Promise<YouTubeVideo[]> {
   try {
     const response = await fetch("/api/youtube?action=trending")
-    const data = await response.json()
+    const data = await readApiJson(response)
 
     if (!data.items) return []
 

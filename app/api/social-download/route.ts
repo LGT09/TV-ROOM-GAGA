@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { providerJson, ProviderError, webUrl } from "@/lib/providers/http"
+import { resolveYoutube } from "@/lib/music/youtube"
 
 const BASE = "https://knightbotapi.stream/api"
 const platforms = ["youtube-audio", "youtube-video", "facebook", "instagram", "tiktok"]
@@ -34,6 +35,7 @@ function normalize(data: any, platform: string) {
 }
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 export async function GET(request: Request) {
   const p = new URL(request.url).searchParams
   const platform = p.get("platform") || ""
@@ -50,6 +52,10 @@ export async function GET(request: Request) {
     } else if (!platform.startsWith("youtube-")) throw new ProviderError("Search queries are supported for YouTube only.", 400)
     const quality = p.get("quality") || "720p"
     if (!["360p", "480p", "720p", "1080p"].includes(quality)) throw new ProviderError("Unsupported video quality.", 400)
+    if(platform.startsWith("youtube-")) {
+      const result=await resolveYoutube(input,platform==="youtube-audio"?"audio":"video","",quality)
+      return NextResponse.json({...result,platform,links:[{label:`Download full ${platform==="youtube-audio"?"audio":"video"}`,url:result.downloadUrl,quality:result.format}]},{headers:{"Cache-Control":"no-store"}})
+    }
     const query = new URLSearchParams({ apikey: "knight" })
     let endpoint: string
     if (isQuery) {

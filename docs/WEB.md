@@ -64,7 +64,7 @@ Streaming connection deadlines stop after response headers arrive; they do not t
 
 Customer pages never show integration names, native action forms or upstream media URLs. Legacy public integration-inspection/gateway routes have been removed.
 
-The existing `SESSION_SECRET` is used only by server code to encrypt and authenticate opaque title/media keys with AES-256-GCM. It is never sent to clients. Title keys expire after one day; file/caption links after 30 minutes. Changing the secret invalidates existing links.
+Server code encrypts and authenticates opaque title/media keys with AES-256-GCM. If `SESSION_SECRET` is configured, it is used; otherwise the build creates a cryptographically random, server-only key shared by every function in that build. No secret is sent to clients or checked into Git. Title keys expire after one day; long-media links last six hours. A new build rotates the automatic key, so previously issued links must be refreshed.
 
 `/api/media` accepts an authenticated opaque key, validates the media host, validates each redirect, forwards single byte ranges for playback, and streams file bodies instead of buffering an entire movie. HLS manifests are rewritten so their child requests also use opaque routes. Caption requests go through SRT-to-VTT conversion. Downloadable files use an attachment response; HLS/DASH playlists are never represented as complete MP4 downloads.
 

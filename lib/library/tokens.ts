@@ -1,9 +1,10 @@
 import "server-only"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 import { ProviderError } from "../providers/http"
+import buildKey from "../../.generated/media-key.json"
 
 function key() {
-  const secret = process.env.SESSION_SECRET
+  const secret = process.env.SESSION_SECRET || buildKey.key
   if (!secret) throw new ProviderError("Secure media routing is not configured.", 503)
   return createHash("sha256").update(secret).digest()
 }

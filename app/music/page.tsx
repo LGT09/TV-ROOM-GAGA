@@ -164,7 +164,7 @@ export default function MusicPage() {
     setError("")
   }
 
-  const startPlayback = async (track: Track, fullSong=false) => {
+  const startPlayback = async (track: Track, fullSong=true) => {
     const key = trackKey(track)
     const audio = audioRef.current
     if (!audio) return
@@ -172,7 +172,7 @@ export default function MusicPage() {
     const controller = new AbortController()
     playController.current = controller
     const sequence = ++playSequence.current
-    if (!fullSong && activeTrack && trackKey(activeTrack) === key && !audio.paused) {
+    if (activeTrack && trackKey(activeTrack) === key && !audio.paused) {
       audio.pause()
       setIsPlaying(false)
       setPlayPendingKey(null)

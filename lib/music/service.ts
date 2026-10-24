@@ -2,6 +2,7 @@ import "server-only"
 import { providerJson, ProviderError, webUrl } from "../providers/http"
 import { allowedMediaUrl } from "../providers/media-url"
 import { seal } from "../library/tokens"
+import { resolveYoutube } from "./youtube"
 
 const base="https://nayan-video-downloader.vercel.app"
 const cache=new Map<string,{until:number;data:any}>()
@@ -50,15 +51,6 @@ export function extractAudio(data:any):string {
   const media=(r.medias||r.formats||[]).find((m:any)=>/^(mp3|m4a|aac|audio)$|audio\//i.test(String(m.extension||m.type||m.mimeType||m.format||"")))
   return webUrl(r.audio?.url||r.mp3?.url||r.audio_url||r.audioUrl||media?.url||(typeof r.audio==="string"?r.audio:"")||(typeof r.mp3==="string"?r.mp3:"")||(/\.(mp3|m4a|aac)(?:[?#]|$)/i.test(r.url||"")?r.url:""))
 }
-async function verifiedAudio(url:string) {
-  allowedMediaUrl(url)
-  const response=await fetch(url,{headers:{Range:"bytes=0-0"},signal:AbortSignal.timeout(2500),redirect:"error",cache:"no-store"})
-  const type=response.headers.get("content-type")||""
-  await response.body?.cancel()
-  if(!response.ok||!/audio\/|application\/octet-stream/i.test(type))throw new Error("Audio file unavailable")
-  const format=/webm/i.test(type)?"WEBM":/ogg/i.test(type)?"OGG":/aac/i.test(type)?"AAC":/mp4|m4a/i.test(type)?"M4A":"MP3"
-  return {url,format}
-}
 function audioLink(url:string,title:string,download=false,nativeFormat?:string) {
   allowedMediaUrl(url)
   const format=nativeFormat||(/\.m4a(?:[?#]|$)/i.test(url)?"M4A":/\.aac(?:[?#]|$)/i.test(url)?"AAC":"MP3")
@@ -75,28 +67,7 @@ export async function musicFile(input:string,title:string,download=false,fullSon
     const link=audioLink(url,title,download)
     return {success:true,audioUrl:link,downloadUrl:download?link:undefined,title,isPreview:false}
   }
-  const full=await cached(`file:${url}:${title}`,20000,async()=>{
-    let source=url
-    if(preview){
-      if(!title)throw new ProviderError("A song title is needed to find a full audio file.",400)
-      const matches=searchTracks(await providerJson(`${base}/ytsearch?${new URLSearchParams({q:title})}`,4500))
-      const words=title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu," ").split(/\s+/).filter(w=>w.length>2)
-      const match=matches.find((m:any)=>words.length>0&&words.filter(w=>m.trackName.toLowerCase().includes(w)).length>=Math.ceil(words.length*.7))
-      if(!match)throw new ProviderError("A matching full song is unavailable. The preview is still playable.")
-      source=match.previewUrl
-    }
-    const attempts=["ytdown","alldown"].map(async action=>{
-      const audio=extractAudio(await providerJson(`${base}/${action}?${new URLSearchParams({url:source})}`,6000))
-      if(!audio)throw new Error("No audio file")
-      return verifiedAudio(audio)
-    })
-    attempts.push((async()=>{
-      const data=await providerJson(`https://knightbotapi.stream/api/download?${new URLSearchParams({apikey:"knight",type:"mp3",url:source})}`,6000)
-      const audio=extractAudio(data)
-      if(!audio)throw new Error("No audio file")
-      return verifiedAudio(audio)
-    })())
-    try{return await Promise.any(attempts)}catch{throw new ProviderError("Full-song audio is unavailable after trying alternate connections. A preview is not a full download.")}
-  })
-  return {success:true,audioUrl:audioLink(full.url,title,false,full.format),downloadUrl:download?audioLink(full.url,title,true,full.format):undefined,title,format:full.format,isPreview:false}
+  if(preview&&!title)throw new ProviderError("A song title is needed to find a full audio file.",400)
+  const full=await resolveYoutube(preview?title:url,"audio",title)
+  return {...full,downloadUrl:download?full.downloadUrl:undefined}
 }

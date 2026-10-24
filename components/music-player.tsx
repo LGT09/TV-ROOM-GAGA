@@ -1,4 +1,5 @@
 "use client"
+import { readApiJson } from "@/lib/client-json"
 import { MediaWatermark } from "@/components/media-watermark"
 
 import { useState, useRef, useEffect } from "react"
@@ -41,26 +42,23 @@ export function MusicPlayer({ currentTrack, playlist, onTrackChange }: MusicPlay
       return track.audioUrl
     }
 
-    // For YouTube URLs, fetch audio via our API with shorter timeout
-    if (
-      videoUrl.includes("youtube.com") ||
-      videoUrl.includes("youtu.be")
-    ) {
+    // Resolve full media; a chart listening sample is never a silent fallback.
+    {
       try {
         setIsLoadingAudio(true)
         setAudioError(null)
         
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 8000) // 8 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 24000)
         
         const response = await fetch(
-          `/api/music?action=get-audio&url=${encodeURIComponent(videoUrl)}`,
+          `/api/music?action=get-audio&full=1&url=${encodeURIComponent(videoUrl)}&title=${encodeURIComponent(track.title)}`,
           { signal: controller.signal, cache: "no-store" }
         )
         
         clearTimeout(timeoutId)
         
-        const data = await response.json()
+        const data = await readApiJson(response)
         if (data.success && data.audioUrl) {
           return data.audioUrl
         }
@@ -71,11 +69,6 @@ export function MusicPlayer({ currentTrack, playlist, onTrackChange }: MusicPlay
       } finally {
         setIsLoadingAudio(false)
       }
-    }
-
-    // Fallback: return the previewUrl if it might be playable audio
-    if (track.previewUrl && !track.previewUrl.includes("youtube.com")) {
-      return track.previewUrl
     }
 
     return null
@@ -99,11 +92,6 @@ export function MusicPlayer({ currentTrack, playlist, onTrackChange }: MusicPlay
           audioUrl.includes("youtu.be")
         ) {
           audioUrl = await fetchAudioUrl(currentTrack)
-        }
-
-        // If previewUrl is a non-YouTube URL, try that
-        if (!audioUrl && currentTrack.previewUrl && !currentTrack.previewUrl.includes("youtube.com")) {
-          audioUrl = currentTrack.previewUrl
         }
 
         if (audioUrl && audioRef.current) {

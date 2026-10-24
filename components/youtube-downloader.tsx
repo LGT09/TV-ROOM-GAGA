@@ -1,4 +1,5 @@
 "use client"
+import { readApiJson } from "@/lib/client-json"
 
 import { useState } from "react"
 import { Download, Loader2, CheckCircle, XCircle, Music, Film, ExternalLink } from 'lucide-react'
@@ -48,7 +49,7 @@ export function YouTubeDownloader() {
         }),
       })
 
-      const data = await response.json()
+      const data = await readApiJson(response)
 
       if (!response.ok) {
         setError(data.error || "Failed to fetch video information.")

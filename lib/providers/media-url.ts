@@ -1,7 +1,7 @@
 import { webUrl, ProviderError, BROWSER_USER_AGENT } from "./http"
 
 // Not an open URL proxy: only public provider/CDN namespaces used by the app.
-const suffixes = ["aoneroom.com", "hakunaymatata.com", "dramaboxdb.com", "omegatech.app", "mzstatic.com", "itunes.apple.com", "archive.org", "sinhalasub.lk", "image.tmdb.org", "googlevideo.com", "nayan-video-downloader.vercel.app"]
+const suffixes = ["aoneroom.com", "hakunaymatata.com", "dramaboxdb.com", "omegatech.app", "mzstatic.com", "itunes.apple.com", "archive.org", "sinhalasub.lk", "image.tmdb.org", "googlevideo.com", "nayan-video-downloader.vercel.app", "savetube.vip", "vidsnap.app"]
 export function allowedMediaUrl(input: string) {
   const value = webUrl(input)
   if (!value) throw new ProviderError("Invalid media URL.", 400)

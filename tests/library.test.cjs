@@ -4,10 +4,11 @@ const fs = require("node:fs")
 const path = require("node:path")
 const ts = require("typescript")
 
-function sandbox(overrides = {}, fetcher = async () => new Response("data", { headers: { "content-type": "video/mp4" } })) {
+function sandbox(overrides = {}, fetcher = async () => new Response("data", { headers: { "content-type": "video/mp4" } }), env = { SESSION_SECRET: "unit-test-fixture-not-a-real-secret" }) {
   const cache = new Map()
   function load(file) {
     file = path.resolve(file)
+    if (file.endsWith(".json.ts")) return JSON.parse(fs.readFileSync(file.slice(0,-3),"utf8"))
     if (overrides[file]) return overrides[file]
     if (cache.has(file)) return cache.get(file)
     const module = { exports: {} }
@@ -15,7 +16,7 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
     const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText
     const req = id => id === "server-only" ? {} : id === "next/server" ? { NextResponse: { json: (data, options) => Response.json(data, options) } } :
       id.startsWith("@/") ? load(id.slice(2) + ".ts") : id.startsWith(".") ? load(path.resolve(path.dirname(file), id + ".ts")) : require(id)
-    new Function("require", "module", "exports", "process", "fetch", code)(req, module, module.exports, { env: { SESSION_SECRET: "unit-test-fixture-not-a-real-secret" } }, fetcher)
+    new Function("require", "module", "exports", "process", "fetch", code)(req, module, module.exports, { env }, fetcher)
     return module.exports
   }
   return load
@@ -32,6 +33,26 @@ test("title keys conceal integration data, authenticate changes and enforce purp
   assert.throws(() => unseal(token, "media"), /invalid or expired/)
   assert.throws(() => unseal(token.slice(0, -3) + "abc", "item"), /invalid or expired/)
   assert.throws(() => unseal(seal("item", value, -1), "item"), /invalid or expired/)
+})
+test("build-scoped signing works across function instances without SESSION_SECRET", () => {
+  const first=sandbox({},undefined,{})("lib/library/tokens.ts")
+  const second=sandbox({},undefined,{})("lib/library/tokens.ts")
+  const token=first.seal("media",{url:"https://cdn.aoneroom.com/file"})
+  assert.equal(second.unseal(token,"media").url,"https://cdn.aoneroom.com/file")
+  assert.throws(()=>second.unseal(token+"tamper","media"),/invalid or expired/)
+})
+test("YouTube links normalize safely, and media files exclude previews and watch pages", () => {
+  const youtube=sandbox()("lib/music/youtube.ts")
+  assert.equal(youtube.youtubeUrl("https://youtu.be/YQHsXMglC9A?t=30"),"https://www.youtube.com/watch?v=YQHsXMglC9A")
+  assert.equal(youtube.youtubeUrl("https://youtube.com.evil.test/watch?v=YQHsXMglC9A"),"")
+  assert.equal(youtube.youtubeUrl("https://www.youtube.com/shorts/YQHsXMglC9A"),"https://www.youtube.com/watch?v=YQHsXMglC9A")
+  assert.deepEqual(youtube.youtubeFiles({result:{url:"https://youtube.com/watch?v=YQHsXMglC9A",download:"https://cdn403.savetube.vip/full.mp3"}},"audio"),["https://cdn403.savetube.vip/full.mp3"])
+  assert.deepEqual(youtube.youtubeFiles({result:{audio:"https://audio-ssl.itunes.apple.com/AudioPreview/song.m4a"}},"audio"),[])
+})
+test("client HTML errors have readable messages instead of JSON parser exceptions",async()=>{
+  const {readApiJson}=sandbox()("lib/client-json.ts")
+  await assert.rejects(()=>readApiJson(new Response("<!DOCTYPE html>bad gateway",{status:502})),/server returned a page/i)
+  assert.deepEqual(await readApiJson(Response.json({success:true})),{success:true})
 })
 test("category metadata is inherited and merged across duplicate section entries", () => {
   const { normalizeProvider } = sandbox()("lib/providers/normalize.ts")

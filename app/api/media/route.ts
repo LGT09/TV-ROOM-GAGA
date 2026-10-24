@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+export const maxDuration=60
 import { allowedMediaUrl, mediaFetch } from "@/lib/providers/media-url"
 import { ProviderError } from "@/lib/providers/http"
 import { seal, unseal } from "@/lib/library/tokens"
