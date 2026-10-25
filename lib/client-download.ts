@@ -12,7 +12,7 @@ export async function saveMediaFile(input:string,filename?:string,signal?:AbortS
     throw new Error(response.status===400?"This download link expired. Refresh the sources and try again.":"The file could not be reached. Try another quality or refresh the sources.")
   }
   if(signal?.aborted)throw new DOMException("Cancelled","AbortError")
-  if(response.headers.get("X-TVRoom-Media-Kind")==="video"&&response.headers.get("X-TVRoom-Watermark")!=="permanent"){
+  if(response.headers.get("X-TVRoom-Media-Kind")==="video"&&response.headers.get("X-TVRoom-Watermark")!=="permanent"&&response.headers.get("X-TVRoom-Download-Mode")!=="original"){
     await queueVideoExport(url,filename,signal)
     return "queued" as const
   }

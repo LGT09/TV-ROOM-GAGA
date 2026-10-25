@@ -272,7 +272,7 @@ export default function MusicPage() {
             </p>
             <h1 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Music</h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              Find a new favorite, hear a preview, and take a full song with you.
+              Find a new favorite, play the full song, and download it when available.
             </p>
           </div>
           <div className="hidden items-center gap-2 rounded-full border border-border/70 bg-card/70 px-3 py-2 text-xs text-muted-foreground sm:inline-flex">
@@ -317,14 +317,14 @@ export default function MusicPage() {
           <div className="mb-4 flex items-end justify-between gap-3">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-muted-foreground">
-                {searchResults !== null ? "Your search" : "Current chart · sorted by release date"}
+                {searchResults !== null ? "Your search" : "New music discovery"}
               </p>
               <h2 id="release-heading" className="mt-1 font-display text-xl font-semibold sm:text-2xl">
-                {searchResults !== null ? "Search results" : "Latest in the current chart"}
+                {searchResults !== null ? "Search results" : "New music picks"}
               </h2>
               {searchResults === null && (
                 <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                  <p>{chartMessage || "Latest releases in the current chart, sorted by release date."}</p>
+                  <p>{chartMessage || "Discover new music. Release dates appear when supplied."}</p>
                   <p>Not a universal release feed.</p>
                 </div>
               )}

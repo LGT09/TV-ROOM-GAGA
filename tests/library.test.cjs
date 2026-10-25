@@ -24,6 +24,35 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
 const base = (id = "moviebox") => ({ id: "1234567890123456789", title: "Example", poster: "https://pbcdn.aoneroom.com/poster.jpg", year: "2023", description: "A film.", type: "movie", detailPath: "example-slug", url: "", provider: id, genres: ["Horror"] })
 const response = (items = [], sources = []) => ({ items, sources, subtitles: [], seasons: [], episodes: [], audioTracks: [] })
 
+test("song trending, discovery and searches use Nayan without substituting chart previews", async()=>{
+  const calls=[]
+  const load=sandbox({},async input=>{
+    const url=new URL(String(input));calls.push(url)
+    assert.equal(url.hostname,"nayan-video-downloader.vercel.app")
+    assert.equal(url.pathname,"/ytsearch")
+    return Response.json({results:[{id:"YQHsXMglC9A",title:"Adele - Hello",url:"https://www.youtube.com/watch?v=YQHsXMglC9A",author:"Adele"}]})
+  })
+  const {musicList}=load("lib/music/service.ts")
+  for(const [query,trending] of [["",true],["",false],["Adele",false],["https://youtu.be/YQHsXMglC9A",false]]){
+    const result=await musicList(query,trending)
+    assert.equal(result.results.length,1)
+    assert.equal(result.results[0].isPreview,false)
+    assert.match(result.results[0].previewUrl,/youtube\.com/)
+  }
+  assert.equal(calls.length,4)
+  const failing=sandbox({},async()=>{throw new Error("Connection down")})("lib/music/service.ts")
+  await assert.rejects(()=>failing.musicList("missing"),/search is temporarily unavailable/)
+})
+test("original movie download mode reaches the browser without changing media bytes",async()=>{
+  const load=sandbox({},async()=>new Response("original movie bytes",{headers:{"Content-Type":"video/mp4"}}))
+  const {seal}=load("lib/library/tokens.ts")
+  const key=seal("media",{url:"https://cdn.hakunaymatata.com/movie.mp4",kind:"video",downloadMode:"original",title:"Movie"})
+  const result=await load("app/api/media/route.ts").GET(new Request(`https://app.example/api/media?key=${key}&download=1`))
+  assert.equal(result.headers.get("X-TVRoom-Download-Mode"),"original")
+  assert.equal(result.headers.get("X-TVRoom-Watermark"),null)
+  assert.equal(await result.text(),"original movie bytes")
+})
+
 test("watermarked exports retain full duration, audio and portrait aspect ratio", () => {
   const {watermarkEdit}=sandbox()("lib/video-exports.ts")
   const edit=watermarkEdit("https://cdn.hakunaymatata.com/source.mp4",1080,1920)

@@ -4,7 +4,7 @@ import { allowedMediaUrl, mediaFetch } from "@/lib/providers/media-url"
 import { ProviderError } from "@/lib/providers/http"
 import { seal, unseal } from "@/lib/library/tokens"
 
-type MediaToken = { url: string; title?: string; kind: string; format?: string; fallbacks?: string[]; branded?:boolean }
+type MediaToken = { url: string; title?: string; kind: string; format?: string; fallbacks?: string[]; branded?:boolean; downloadMode?:string }
 export const dynamic = "force-dynamic"
 export async function GET(request: Request) {
   try {
@@ -48,6 +48,7 @@ export async function GET(request: Request) {
     }
     const headers = new Headers({ "Content-Type": type, "Cache-Control": token.kind==="image"?"private, max-age=3600":"private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" })
     headers.set("X-TVRoom-Media-Kind",token.kind)
+    if(token.downloadMode==="original")headers.set("X-TVRoom-Download-Mode","original")
     if(token.branded)headers.set("X-TVRoom-Watermark","permanent")
     for (const name of ["Content-Range", "Accept-Ranges"]) {
       const value = response.headers.get(name)

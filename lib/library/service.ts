@@ -224,7 +224,7 @@ async function loadDetail(original:Locator) {
 function mediaLink(url: string, title: string, format: string, fallbacks: string[] = []) {
   allowedMediaUrl(url)
   fallbacks.forEach(allowedMediaUrl)
-  return `/api/media?key=${seal("media", { url, title, kind: "video", format, ...(fallbacks.length?{fallbacks}:{}) }, 21600)}${format === "HLS" ? "&format=hls" : format==="DASH"?"&format=dash":""}`
+  return `/api/media?key=${seal("media", { url, title, kind: "video", format, downloadMode:"original", ...(fallbacks.length?{fallbacks}:{}) }, 21600)}${format === "HLS" ? "&format=hls" : format==="DASH"?"&format=dash":""}`
 }
 async function usable(source: MediaSource) {
   try {

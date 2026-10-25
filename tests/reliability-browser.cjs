@@ -10,7 +10,8 @@ const assert=require("node:assert/strict")
   const errors=[]
   page.on("pageerror",e=>errors.push(e.message))
   const item={key:"fixture-title",title:"Reliability test film",year:"2026",type:"movie",poster:"",description:"Test fixture"}
-  let lists=0,failFile=true
+  let lists=0,failFile=true,renderSubmissions=0
+  await context.route("**/api/video-exports",route=>{renderSubmissions++;return route.fulfill({status:500,json:{error:"Movie downloads must not submit a render"}})})
   await context.route("**/api/library?**",async route=>{
    const action=new URL(route.request().url()).searchParams.get("action")
    if(action==="list"){lists++;return route.fulfill({json:{success:true,items:[item],page:1,limit:12,hasNext:false}})}
@@ -19,7 +20,7 @@ const assert=require("node:assert/strict")
   })
   await context.route("**/api/media?**",route=>{
    if(failFile&&route.request().method()==="HEAD")return route.fulfill({status:502,contentType:"application/json",body:'{"error":"unavailable"}'})
-   return route.fulfill({status:200,headers:{"Content-Type":"video/mp4","Content-Disposition":'attachment; filename="test.mp4"'},body:route.request().method()==="HEAD"?"":"fixture media"})
+   return route.fulfill({status:200,headers:{"Content-Type":"video/mp4","Content-Disposition":'attachment; filename="test.mp4"',"X-TVRoom-Media-Kind":"video","X-TVRoom-Download-Mode":"original"},body:route.request().method()==="HEAD"?"":"fixture media"})
   })
   await page.goto(`https://${process.env.REPLIT_DEV_DOMAIN}/movies`,{waitUntil:"domcontentloaded"})
   const card=page.getByRole("button",{name:"Open Reliability test film",exact:true})
@@ -48,6 +49,7 @@ const assert=require("node:assert/strict")
   assert.match(download.url(),/\/api\/media\?key=fixture/)
   await download.cancel()
   await page.getByRole("status").filter({hasText:"Sent to your browser"}).waitFor()
+  assert.equal(renderSubmissions,0,"Movie downloads must bypass watermark processing")
   assert.deepEqual(errors,[])
   console.log(JSON.stringify({offlineCachedCatalogue:true,onlineRecovery:true,failedFileVisible:true,browserDownload:true,pageErrors:errors}))
  }finally{await browser.close()}

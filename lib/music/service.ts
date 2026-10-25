@@ -1,10 +1,9 @@
 import "server-only"
-import { providerJson, ProviderError, webUrl } from "../providers/http"
+import { ProviderError, webUrl } from "../providers/http"
 import { allowedMediaUrl } from "../providers/media-url"
 import { seal } from "../library/tokens"
 import { resolveYoutube, youtubeSearch } from "./youtube"
 
-const base="https://nayan-video-downloader.vercel.app"
 const cache=new Map<string,{until:number;data:any}>()
 const pending=new Map<string,Promise<any>>()
 async function cached(key:string,ttl:number,work:()=>Promise<any>) {
@@ -34,16 +33,9 @@ function searchTracks(data:any) {
 }
 export async function musicList(query="",trending=false) {
   return cached(`list:${trending?"trending:":""}${query}`,120000,async()=>{
-    if(query) {
-      try{
-        const items=searchTracks({results:await youtubeSearch(query)})
-        if(items.length)return {results:items,message:"Search results. Release dates are shown when supplied."}
-      }catch{}
-    }
-    const tracks=chartTracks(await providerJson("https://itunes.apple.com/us/rss/topsongs/limit=50/json",5000),!trending)
-    const q=query.toLowerCase()
-    return {results:(query?tracks.filter((t:any)=>`${t.trackName} ${t.artistName}`.toLowerCase().includes(q)):tracks).slice(0,30),
-      message:query?"Matching songs from the current music chart.":trending?"Trending songs in current chart order. Listening samples are labeled Preview.":"Latest releases in the current music chart. Direct listening samples are labeled Preview."}
+    const term=query.trim()||(trending?"trending songs official music":`new music releases ${new Date().getFullYear()} official audio`)
+    const items=searchTracks({results:await youtubeSearch(term)}).slice(0,30)
+    return {results:items,message:query?"Song search results. Release dates are shown when supplied.":trending?"Trending song picks, not an official ranked chart. Play or download full audio when available.":"New music discovery. Release dates are shown only when supplied."}
   })
 }
 export function extractAudio(data:any):string {

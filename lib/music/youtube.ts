@@ -48,14 +48,12 @@ async function search(input:string) {
     throw new ProviderError("This playlist has no accessible videos.",404)
   }
   if(/^https?:\/\//i.test(term)&&!url)throw new ProviderError("Enter a valid YouTube video link.",400)
-  if(url) {
-    const id=new URL(url).searchParams.get("v")!
-    let title="YouTube video"
-    try{title=(await providerJson(`https://www.youtube.com/oembed?${new URLSearchParams({url,format:"json"})}`,4000)).title||title}catch{}
-    return [{id,url,title,thumbnail:`https://i.ytimg.com/vi/${id}/hqdefault.jpg`,author:"",duration:""}]
-  }
   for(const param of ["q","query"]) {
-    try{const items=youtubeItems(await providerJson(`${base}/ytsearch?${new URLSearchParams({[param]:term})}`,6000));if(items.length)return items}catch{}
+    try{
+      const items=youtubeItems(await providerJson(`${base}/ytsearch?${new URLSearchParams({[param]:url||term})}`,6000))
+      const matches=url?items.filter(item=>item.url===url):items
+      if(matches.length)return matches
+    }catch{}
   }
   throw new ProviderError("YouTube search is temporarily unavailable. Try a direct video link.",502)
 }

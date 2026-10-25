@@ -82,7 +82,9 @@ Search/download actions prioritize the Nayan endpoints, including playlist looku
 
 Download actions check the secured file endpoint before handing an attachment to the browser. A failed download URL can fall back to the playable file for the same title. The site does not hold an entire movie in a JavaScript Blob and does not simulate download completion or invent transfer speeds. Once handed off, the browser owns progress, pause/resume and the save location.
 
-`TV ROOM GAGA` is displayed directly over the visible video area, including container fullscreen. The playback overlay does not alter media bytes. Video download buttons now require confirmation and submit an independent full-video render to Shotstack, embedding that exact text into the exported MP4 frames. Audio-only downloads remain direct.
+`TV ROOM GAGA` is displayed directly over the visible video area, including container fullscreen. The playback overlay does not alter media bytes. Movie-library downloads save the original file immediately after checking availability, without watermark processing. Other video downloader tools still use the background watermarked export flow described below. Audio-only downloads remain direct.
+
+Trending song picks, new music discovery and song searches use Nayan’s YouTube search endpoints, including keyword, pasted video link and playlist lookup. They do not silently switch to Apple chart samples if search fails. Trending picks are discovery results, not a verified ranked chart. Play/download actions resolve full files, not short previews.
 
 ## Background watermarked exports
 

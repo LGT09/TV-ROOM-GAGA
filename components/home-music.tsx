@@ -210,7 +210,7 @@ export function HomeMusic() {
               {searching ? "Find your next favorite" : "Trending songs"}
             </h2>
             <p className="mt-1 max-w-lg text-xs leading-relaxed text-muted-foreground sm:text-sm">
-              {searching ? "Search songs and artists. Hear a preview right here." : "A little of what’s moving right now. Press play to hear a preview."}
+              {searching ? "Search songs and artists. Play full audio right here." : "Discover trending song picks. Play or download full audio when available."}
             </p>
           </div>
           <Link href="/music" className="inline-flex min-h-9 items-center gap-1 self-start text-xs font-semibold text-primary transition-transform hover:translate-x-0.5 md:self-auto">
@@ -242,7 +242,7 @@ export function HomeMusic() {
 
         <div className="mb-3 mt-5 flex min-h-6 items-center justify-between gap-3">
           <p className="text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">
-            {searching ? "Search results" : "On the chart"} {tracks.length > 0 && !isLoading ? <span className="ml-1 tabular-nums">· {tracks.length}</span> : null}
+            {searching ? "Search results" : "Trending hits"} {tracks.length > 0 && !isLoading ? <span className="ml-1 tabular-nums">· {tracks.length}</span> : null}
           </p>
           {searching && !isSearching && <button type="button" onClick={showTrending} className="text-[11px] font-semibold text-primary hover:underline">Back to trending</button>}
         </div>
@@ -265,7 +265,7 @@ export function HomeMusic() {
         ) : tracks.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border/80 bg-background/35 px-5 py-8 text-center">
             <Disc3 className="mx-auto h-7 w-7 text-primary/75" />
-            <h3 className="mt-2 font-display text-lg font-semibold">{searching ? "No songs found" : "The chart is quiet"}</h3>
+            <h3 className="mt-2 font-display text-lg font-semibold">{searching ? "No songs found" : "No trending songs available"}</h3>
             <p className="mt-1 text-xs text-muted-foreground">{searching ? "Try a different song or artist." : "Trending songs will appear here when available."}</p>
             {searching && <Button variant="ghost" size="sm" onClick={showTrending} className="mt-2">Show trending</Button>}
           </div>
