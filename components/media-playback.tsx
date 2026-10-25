@@ -21,6 +21,21 @@ export function MediaPlayback({ src, title = "Media playback", subtitles = [], a
   const [error, setError] = useState("")
   const [activeSrc, setActiveSrc] = useState(src)
   const [attempt, setAttempt] = useState(0)
+  const [watermarkInset,setWatermarkInset]=useState<{top:number;right:number}>()
+  const alignWatermark=()=>{
+    const video=videoRef.current
+    if(!video?.videoWidth||!video.videoHeight)return
+    const {width,height}=video.getBoundingClientRect()
+    const scale=Math.min(width/video.videoWidth,height/video.videoHeight)
+    const mediaWidth=video.videoWidth*scale,mediaHeight=video.videoHeight*scale
+    setWatermarkInset({top:(height-mediaHeight)/2+mediaHeight*.05,right:(width-mediaWidth)/2+mediaWidth*.04})
+  }
+  useEffect(()=>{
+    if(!containerRef.current)return
+    const observer=new ResizeObserver(alignWatermark)
+    observer.observe(containerRef.current)
+    return()=>observer.disconnect()
+  },[])
 
   useEffect(() => {
     setActiveSrc(src)
@@ -73,14 +88,14 @@ export function MediaPlayback({ src, title = "Media playback", subtitles = [], a
 
   return <div className="space-y-3">
     <div ref={containerRef} className="relative aspect-video overflow-hidden rounded-2xl bg-[#111722] border border-white/10">
-      {activeSrc ? <video key={activeSrc} ref={videoRef} controls controlsList="nodownload nofullscreen" playsInline className="w-full h-full object-contain" aria-label={title}
+      {activeSrc ? <video key={activeSrc} ref={videoRef} controls controlsList="nodownload nofullscreen" disablePictureInPicture playsInline className="w-full h-full object-contain" aria-label={title}
         onPlay={()=>{resume.current=true}} onPause={()=>{if(!videoRef.current?.error)resume.current=false}}
-        onLoadedMetadata={()=>{const video=videoRef.current;if(video&&position.current&&Number.isFinite(video.duration))video.currentTime=Math.min(position.current,Math.max(0,video.duration-1));if(video&&resume.current)void video.play().catch(()=>{})}}
+        onLoadedMetadata={()=>{alignWatermark();const video=videoRef.current;if(video&&position.current&&Number.isFinite(video.duration))video.currentTime=Math.min(position.current,Math.max(0,video.duration-1));if(video&&resume.current)void video.play().catch(()=>{})}}
         onCanPlay={()=>setStatus("")}
         onError={()=>{if(!hlsRef.current)fail("None of the available streams could play. Try refreshing the sources; the host may be offline, region-restricted, or use an unsupported codec.")}}>
         {subtitles.map((caption, i) => <track key={`${caption.url}-${i}`} kind="subtitles" src={caption.url.startsWith("/") ? caption.url : `/api/subtitle?url=${encodeURIComponent(caption.url)}`} srcLang={caption.language || "en"} label={caption.label || caption.language || "Captions"} />)}
       </video> : <div className="h-full grid place-items-center text-sm text-white/65">Choose an available source to begin playback.</div>}
-      <MediaWatermark/>
+      <MediaWatermark inset={watermarkInset}/>
       {error && <div role="alert" className="absolute inset-x-3 bottom-14 glass rounded-xl p-3 text-sm flex gap-3 items-start">
         <AlertTriangle className="h-4 w-4 text-primary shrink-0 mt-0.5" /><span>{error}</span>
       </div>}

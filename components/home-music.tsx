@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { AlertCircle, ArrowUpRight, Disc3, Download, LoaderCircle, Music2, Pause, Play, RotateCcw, Search } from "lucide-react"
+import { saveMediaFile } from "@/lib/client-download"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -185,13 +186,7 @@ export function HomeMusic() {
       const data = await requestJson<MusicResponse>(`/api/music?${params}`, controller)
       if (controller.signal.aborted) return
       if (!data.success || !data.downloadUrl) throw new Error(data.error || "A full-song download isn’t available for this song.")
-      const link = document.createElement("a")
-      link.href = data.downloadUrl
-      link.download = `${(data.title || track.trackName).replace(/[\\/:*?"<>|]/g, "").trim() || "song"}.mp3`
-      link.rel = "noopener"
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
+      await saveMediaFile(data.downloadUrl,undefined,controller.signal)
     } catch (reason) {
       if (!controller.signal.aborted) setActionError({ key, message: reason instanceof Error ? reason.message : "Download couldn’t start. Please try again." })
     } finally {

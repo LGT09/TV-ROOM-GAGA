@@ -1,15 +1,16 @@
 "use client"
-import { readApiJson } from "@/lib/client-json"
 
 import type React from "react"
-import { createContext, useContext, useState, useRef, useCallback } from "react"
+import { createContext, useContext, useState, useRef, useCallback, useEffect } from "react"
 import type { ContentItem } from "@/lib/types"
+import { readApiJson } from "@/lib/client-json"
+import { resolveMovieDownload, saveMediaFile } from "@/lib/client-download"
 
 export interface DownloadItem {
   id: string
   content: ContentItem
   progress: number
-  status: "downloading" | "completed" | "failed" | "paused" | "pending"
+  status: "downloading" | "completed" | "failed" | "paused" | "pending" | "requested" | "processing"
   downloadedAt?: Date
   fileSize?: string
   fileSizeBytes?: number
@@ -17,8 +18,8 @@ export interface DownloadItem {
   downloadUrl?: string
   speed?: string
   eta?: string
+  error?: string
 }
-
 interface DownloadManagerContextType {
   downloads: DownloadItem[]
   activeDownloads: DownloadItem[]
@@ -32,401 +33,76 @@ interface DownloadManagerContextType {
   downloadYouTube: (url: string, format: "mp3" | "mp4", title?: string) => Promise<void>
   directDownload: (url: string, filename: string) => void
 }
-
 const DownloadManagerContext = createContext<DownloadManagerContextType | undefined>(undefined)
-
-// Format bytes to human readable size
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 Bytes"
-  const k = 1024
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
-}
-
-// Estimate file size based on quality and duration
-function estimateFileSize(durationMinutes: number, quality: string, type: "video" | "audio" | "music"): { display: string, bytes: number } {
-  const bitrates: Record<string, number> = {
-    // Video bitrates (Mbps)
-    "2160p": 25,
-    "4K": 25,
-    "1080p": 8,
-    "720p": 5,
-    "480p": 2.5,
-    "360p": 1,
-    // Audio bitrates (Kbps -> converted to Mbps)
-    "320kbps": 0.32,
-    "256kbps": 0.256,
-    "192kbps": 0.192,
-    "128kbps": 0.128,
-  }
-
-  let bitrate = bitrates[quality] || 5
-  
-  // Audio/Music uses much lower bitrates
-  if (type === "audio" || type === "music") {
-    bitrate = bitrates["320kbps"] || 0.32
-  }
-  
-  const durationSeconds = durationMinutes * 60
-  const fileSizeMB = (bitrate * durationSeconds) / 8
-  const fileSizeBytes = fileSizeMB * 1024 * 1024
-  
-  return {
-    display: formatBytes(fileSizeBytes),
-    bytes: fileSizeBytes
-  }
-}
-
-// Parse duration string to minutes
-function parseDuration(duration: string | undefined): number {
-  if (!duration) return 120
-
-  const hourMatch = duration.match(/(\d+)h/)
-  const minMatch = duration.match(/(\d+)m/)
-  const epMatch = duration.match(/(\d+)\s*ep/i)
-  const minOnlyMatch = duration.match(/(\d+)\s*min/i)
-
-  if (hourMatch || minMatch) {
-    const hours = hourMatch ? Number.parseInt(hourMatch[1]) : 0
-    const mins = minMatch ? Number.parseInt(minMatch[1]) : 0
-    return hours * 60 + mins
-  }
-
-  if (minOnlyMatch) {
-    return Number.parseInt(minOnlyMatch[1])
-  }
-
-  if (epMatch) {
-    return Number.parseInt(epMatch[1]) * 45
-  }
-
-  // Handle MM:SS format
-  const timeMatch = duration.match(/(\d+):(\d+)/)
-  if (timeMatch) {
-    return parseInt(timeMatch[1]) + parseInt(timeMatch[2]) / 60
-  }
-
-  const plainMin = duration.match(/(\d+)/)
-  if (plainMin) {
-    return Number.parseInt(plainMin[1])
-  }
-
-  return 120
-}
 
 export function DownloadManagerProvider({ children }: { children: React.ReactNode }) {
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
-  const intervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const controllers = useRef(new Map<string, AbortController>())
+  useEffect(()=>()=>{controllers.current.forEach(controller=>controller.abort())},[])
 
-  // Direct download - triggers browser download by opening in new tab
   const directDownload = useCallback((url: string, filename: string) => {
-    // Open URL in new tab for immediate download - faster than creating anchor
-    window.open(url, "_blank")
+    void saveMediaFile(url,filename).catch(error=>alert(error.message||"Download could not start."))
   }, [])
-
-  // Download YouTube video/audio
   const downloadYouTube = useCallback(async (url: string, format: "mp3" | "mp4", title?: string) => {
-    try {
-      const action = format === "mp3" ? "download-mp3" : "download-mp4"
-      const response = await fetch(`/api/music?action=${action}&url=${encodeURIComponent(url)}`)
-      const data = await readApiJson(response)
-
-      if (data.success && data.downloadUrl) {
-        // Trigger direct download to user's device
-        directDownload(data.downloadUrl, `${title || "download"}.${format}`)
-        
-        alert(
-          `Download Started!\n\n` +
-          `Title: ${data.title || title || "Media"}\n` +
-          `Format: ${format.toUpperCase()}\n` +
-          `Quality: ${data.quality || "Best"}\n` +
-          `Size: ${data.size || "N/A"}\n\n` +
-          `File will be saved to your device's download folder.`
-        )
-      } else {
-        // Try YouTube API as fallback
-        const ytResponse = await fetch(`/api/youtube?action=download&url=${encodeURIComponent(url)}&format=${format}`)
-        const ytData = await readApiJson(ytResponse)
-        
-        if (ytData.success && ytData.downloadUrl) {
-          directDownload(ytData.downloadUrl, `${title || "download"}.${format}`)
-          alert(
-            `Download Started!\n\n` +
-            `Title: ${ytData.title || title || "Media"}\n` +
-            `Format: ${format.toUpperCase()}\n` +
-            `Size: ${ytData.size || "N/A"}`
-          )
-        } else {
-          alert("Could not get download link. Please try again.")
-        }
-      }
-    } catch (error) {
-      alert("Download failed. Please try again.")
-    }
-  }, [directDownload])
-
-  // Search and download movie
+    const data=await readApiJson(await fetch(`/api/youtube?${new URLSearchParams({action:"download",url,format})}`,{signal:AbortSignal.timeout(30000)}))
+    if(!data.downloadUrl||data.isPreview)throw new Error("No full downloadable file was returned.")
+    await saveMediaFile(data.downloadUrl)
+  },[])
   const searchAndDownloadMovie = useCallback(async (title: string, quality = "720p") => {
-    try {
-      // Search movies
-      const response = await fetch(`/api/movie-download?action=search&query=${encodeURIComponent(title)}&limit=5`)
-      const data = await readApiJson(response)
+    try{
+      const data=await resolveMovieDownload(title,quality)
+      await saveMediaFile(data.downloadUrl)
+    }catch(error){alert(error instanceof Error?error.message:"Download could not start.")}
+  },[])
 
-      if (!data.success && data.error) {
-        alert(`Search failed: ${data.error}`)
-        return
-      }
-
-      if (data.results && data.results.length > 0) {
-        const movie = data.results[0]
-        
-        // If movie has a download URL, get the actual download link
-        if (movie.downloadUrl) {
-          const downloadResponse = await fetch(
-            `/api/movie-download?action=download&url=${encodeURIComponent(movie.downloadUrl)}`
-          )
-          const downloadData = await readApiJson(downloadResponse)
-
-          if (downloadData.success && downloadData.downloadUrl) {
-            // Trigger direct download to user's device
-            const filename = `${movie.title} (${movie.year || ""})-${quality}.mp4`
-              .replace(/[/\\?%*:|"<>]/g, "-")
-            
-            directDownload(downloadData.downloadUrl, filename)
-            
-            alert(
-              `Download Started!\n\n` +
-              `Title: ${movie.title}\n` +
-              `Year: ${movie.year || "N/A"}\n` +
-              `Quality: ${downloadData.quality || movie.quality || quality}\n` +
-              `Size: ${downloadData.size || movie.size || "N/A"}\n` +
-              `Source: ${downloadData.source || movie.source}\n\n` +
-              `File will be saved to your device's download folder.`
-            )
-            return
-          }
-        }
-        
-        // If we have a direct URL, open it
-        if (movie.downloadUrl) {
-          window.open(movie.downloadUrl, "_blank")
-          alert(
-            `Movie Found: ${movie.title}\n\n` +
-            `Year: ${movie.year || "N/A"}\n` +
-            `Quality: ${movie.quality || "HD"}\n` +
-            `Size: ${movie.size || "N/A"}\n\n` +
-            `Opening download page in new tab...`
-          )
-          return
-        }
-        
-        alert(
-          `Movie Found: ${movie.title}\n\n` +
-          `Year: ${movie.year || "N/A"}\n` +
-          `Quality: ${movie.quality || "HD"}\n\n` +
-          `Click on the movie card to view download options.`
-        )
-      } else {
-        alert(`No results found for: ${title}\n\nTry a different search term or check your spelling.`)
-      }
-    } catch (error) {
-      alert("Failed to search for movie. Please check your connection and try again.")
-    }
-  }, [directDownload])
-
-  // Start simulated download with progress tracking
   const startDownload = useCallback((content: ContentItem, quality = "720p") => {
-    const durationMinutes = parseDuration(content.duration)
-    const type = content.type === "music" ? "audio" : "video"
-    const { display: fileSize, bytes: fileSizeBytes } = estimateFileSize(durationMinutes, quality, type)
-
-    const newDownload: DownloadItem = {
-      id: `download-${Date.now()}-${content.id}`,
-      content,
-      progress: 0,
-      status: "downloading",
-      fileSize,
-      fileSizeBytes,
-      quality,
-    }
-
-    setDownloads((prev) => [newDownload, ...prev])
-
-    let progress = 0
-    let downloadedBytes = 0
-    const totalBytes = fileSizeBytes
-    const startTime = Date.now()
-    
-    const interval = setInterval(() => {
-      const increment = Math.random() * 12 + 3
-      progress = Math.min(progress + increment, 100)
-      downloadedBytes = (progress / 100) * totalBytes
-      
-      // Calculate speed and ETA
-      const elapsedSeconds = (Date.now() - startTime) / 1000
-      const speedBps = downloadedBytes / elapsedSeconds
-      const remainingBytes = totalBytes - downloadedBytes
-      const etaSeconds = speedBps > 0 ? remainingBytes / speedBps : 0
-
-      if (progress >= 100) {
-        clearInterval(interval)
-        intervalsRef.current.delete(newDownload.id)
-        
-        setDownloads((prev) =>
-          prev.map((d) =>
-            d.id === newDownload.id
-              ? { 
-                  ...d, 
-                  progress: 100, 
-                  status: "completed" as const, 
-                  downloadedAt: new Date(),
-                  speed: undefined,
-                  eta: undefined
-                }
-              : d,
-          ),
-        )
-
-        alert(
-          `Download Complete!\n\n` +
-          `Title: ${content.title}\n` +
-          `Type: ${content.type.toUpperCase()}\n` +
-          `Quality: ${quality}\n` +
-          `File Size: ${fileSize}\n` +
-          `Duration: ${content.duration || "N/A"}\n\n` +
-          `File saved successfully!`
-        )
-      } else {
-        setDownloads((prev) => 
-          prev.map((d) => 
-            d.id === newDownload.id 
-              ? { 
-                  ...d, 
-                  progress,
-                  speed: formatBytes(speedBps) + "/s",
-                  eta: etaSeconds > 0 ? `${Math.ceil(etaSeconds)}s remaining` : "Calculating..."
-                } 
-              : d
-          )
-        )
-      }
-    }, 800)
-
-    intervalsRef.current.set(newDownload.id, interval)
-  }, [])
-
-  const pauseDownload = useCallback((id: string) => {
-    const interval = intervalsRef.current.get(id)
-    if (interval) {
-      clearInterval(interval)
-      intervalsRef.current.delete(id)
-    }
-
-    setDownloads((prev) =>
-      prev.map((download) => 
-        download.id === id 
-          ? { ...download, status: "paused" as const, speed: undefined, eta: undefined } 
-          : download
-      ),
-    )
-  }, [])
-
-  const resumeDownload = useCallback((id: string) => {
-    const download = downloads.find((d) => d.id === id)
-    if (download && download.status === "paused") {
-      // Resume from current progress
-      let progress = download.progress
-      const totalBytes = download.fileSizeBytes || 0
-      const startTime = Date.now()
-      
-      setDownloads((prev) =>
-        prev.map((d) => (d.id === id ? { ...d, status: "downloading" as const } : d))
-      )
-      
-      const interval = setInterval(() => {
-        const increment = Math.random() * 12 + 3
-        progress = Math.min(progress + increment, 100)
-        const downloadedBytes = (progress / 100) * totalBytes
-        
-        const elapsedSeconds = (Date.now() - startTime) / 1000
-        const speedBps = downloadedBytes / elapsedSeconds
-        const remainingBytes = totalBytes - downloadedBytes
-        const etaSeconds = speedBps > 0 ? remainingBytes / speedBps : 0
-
-        if (progress >= 100) {
-          clearInterval(interval)
-          intervalsRef.current.delete(id)
-          
-          setDownloads((prev) =>
-            prev.map((d) =>
-              d.id === id
-                ? { ...d, progress: 100, status: "completed" as const, downloadedAt: new Date() }
-                : d,
-            ),
-          )
-        } else {
-          setDownloads((prev) => 
-            prev.map((d) => 
-              d.id === id 
-                ? { 
-                    ...d, 
-                    progress,
-                    speed: formatBytes(speedBps) + "/s",
-                    eta: etaSeconds > 0 ? `${Math.ceil(etaSeconds)}s remaining` : "Calculating..."
-                  } 
-                : d
-            )
-          )
+    const id=`download-${Date.now()}-${content.id}`
+    const controller=new AbortController()
+    controllers.current.set(id,controller)
+    setDownloads(current=>[{id,content,quality,status:"pending",progress:0},...current])
+    const update=(changes:Partial<DownloadItem>)=>setDownloads(current=>current.map(item=>item.id===id?{...item,...changes}:item))
+    const timeout=setTimeout(()=>controller.abort(),90000)
+    void (async()=>{
+      try{
+        if(!navigator.onLine)throw new Error("You are offline. Reconnect to download this file.")
+        let url=content.downloadUrl?.startsWith("/api/media?")?content.downloadUrl:""
+        if(!url&&content.type==="music"){
+          const source=content.audioUrl||content.previewUrl||content.videoUrl||""
+          const params=new URLSearchParams({action:"download",format:"mp3",...(source?{url:source}:{query:`${content.title} ${content.artist||""}`})})
+          // Resolve chart previews by title, never download the sample itself.
+          const data=source&&!/youtube\.com|youtu\.be/.test(source)
+            ?await readApiJson(await fetch(`/api/music?${new URLSearchParams({action:"download-mp3",url:source,title:`${content.title} ${content.artist||""}`})}`,{signal:controller.signal}))
+            :await readApiJson(await fetch(`/api/youtube?${params}`,{signal:controller.signal}))
+          if(data.isPreview)throw new Error("A preview is not a full-song download.")
+          url=data.downloadUrl
+        }else if(!url&&content.type==="movie"){
+          url=(await resolveMovieDownload(content.title,quality,controller.signal)).downloadUrl
         }
-      }, 800)
-
-      intervalsRef.current.set(id, interval)
-    }
-  }, [downloads])
-
-  const cancelDownload = useCallback((id: string) => {
-    const interval = intervalsRef.current.get(id)
-    if (interval) {
-      clearInterval(interval)
-      intervalsRef.current.delete(id)
-    }
-
-    setDownloads((prev) => prev.filter((download) => download.id !== id))
-  }, [])
-
-  const removeDownload = useCallback((id: string) => {
-    setDownloads((prev) => prev.filter((download) => download.id !== id))
-  }, [])
-
-  const activeDownloads = downloads.filter((d) => d.status === "downloading" || d.status === "paused")
-  const completedDownloads = downloads.filter((d) => d.status === "completed")
-
-  return (
-    <DownloadManagerContext.Provider
-      value={{
-        downloads,
-        activeDownloads,
-        completedDownloads,
-        startDownload,
-        pauseDownload,
-        resumeDownload,
-        cancelDownload,
-        removeDownload,
-        searchAndDownloadMovie,
-        downloadYouTube,
-        directDownload,
-      }}
-    >
-      {children}
-    </DownloadManagerContext.Provider>
-  )
+        if(!url)throw new Error("Open this title in Movies & series and choose an available episode or file.")
+        const result=await saveMediaFile(url,undefined,controller.signal)
+        update({status:result==="queued"?"processing":"requested",downloadUrl:url,downloadedAt:new Date()})
+      }catch(error){
+        if(!controller.signal.aborted)update({status:"failed",error:error instanceof Error?error.message:"Download could not start."})
+        else update({status:"paused",error:"Preparation stopped. Retry when your connection is ready."})
+      }finally{clearTimeout(timeout);controllers.current.delete(id)}
+    })()
+  },[])
+  const pauseDownload=useCallback((id:string)=>{controllers.current.get(id)?.abort()},[])
+  const cancelDownload=useCallback((id:string)=>{
+    controllers.current.get(id)?.abort()
+    controllers.current.delete(id)
+    setDownloads(current=>current.filter(item=>item.id!==id))
+  },[])
+  const resumeDownload=useCallback((id:string)=>{
+    const item=downloads.find(item=>item.id===id)
+    if(item){cancelDownload(id);startDownload(item.content,item.quality)}
+  },[downloads,cancelDownload,startDownload])
+  const activeDownloads=downloads.filter(item=>["pending","downloading","paused","failed","processing"].includes(item.status))
+  const completedDownloads=downloads.filter(item=>["requested","completed"].includes(item.status))
+  return <DownloadManagerContext.Provider value={{downloads,activeDownloads,completedDownloads,startDownload,pauseDownload,resumeDownload,cancelDownload,removeDownload:cancelDownload,searchAndDownloadMovie,downloadYouTube,directDownload}}>{children}</DownloadManagerContext.Provider>
 }
-
 export function useDownloadManager() {
-  const context = useContext(DownloadManagerContext)
-  if (context === undefined) {
-    throw new Error("useDownloadManager must be used within a DownloadManagerProvider")
-  }
+  const context=useContext(DownloadManagerContext)
+  if(!context)throw new Error("useDownloadManager must be used within a DownloadManagerProvider")
   return context
 }

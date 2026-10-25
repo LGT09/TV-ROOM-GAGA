@@ -76,6 +76,24 @@ The browser decides the destination for a download. The website cannot silently 
 
 Client requests show pending states immediately, cancel stale requests, and time out with a retry action. Lists and normalized metadata use short-lived caches. Movie files are probed before links are offered, and playback still reports media-host errors honestly. External services can be offline, geo-restricted, or return expired/denied files.
 
+The catalogue keeps up to eight recent views in browser storage for thirty minutes. A loaded app can show these during a connection outage and retries the catalogue when the network returns. This is metadata caching, not offline movie storage: uncached streams, searches and downloads require an internet connection.
+
+Search/download actions prioritize the Nayan endpoints, including playlist lookup, YouTube search, YouTube media resolution, and platform-specific social endpoints. The older downloader services are retained as fallback and are also tried if the preferred services respond too slowly. Silent adaptive video-only formats are not advertised as complete videos.
+
+Download actions check the secured file endpoint before handing an attachment to the browser. A failed download URL can fall back to the playable file for the same title. The site does not hold an entire movie in a JavaScript Blob and does not simulate download completion or invent transfer speeds. Once handed off, the browser owns progress, pause/resume and the save location.
+
+`TV ROOM GAGA` is displayed directly over the visible video area, including container fullscreen. The playback overlay does not alter media bytes. Video download buttons now require confirmation and submit an independent full-video render to Shotstack, embedding that exact text into the exported MP4 frames. Audio-only downloads remain direct.
+
+## Background watermarked exports
+
+The connected Shotstack account is used through the server-only Replit connectors SDK. `POST /api/video-exports` accepts only signed original-video keys and same-origin confirmed requests. The server probes dimensions/duration, preserves aspect ratio (up to 1920 pixels per edge), uses the full source duration and retains its audio. It does not bypass source access controls. Live/adaptive streams are not exportable here.
+
+The **Watermarked videos** panel polls render status and offers the processed file only when rendering finishes. Jobs survive page changes and reloads in the same browser through local storage for 23 hours. Submission needs the tab open until confirmed; rendering itself continues on Shotstack after the tab closes. Temporary render files expire after 24 hours; save completed files promptly. No unbranded original is substituted when processing fails. Removing a queue item does not cancel or refund the remote render. Original signed URLs may expire before the processor fetches them.
+
+Render credentials, upstream URLs and render IDs stay server-side; the browser receives purpose-scoped opaque job/file tokens. These are bearer capabilities, not account authentication. Clearing browser storage loses the local job list. Blocked storage prevents job submission rather than risking an untracked paid job. Submission interrupted before confirmation has an unknown outcome; check the processor account before retrying.
+
+Limits: three pending jobs per browser, ten submissions/hour per running server instance, six-hour maximum source duration. In-memory deduplication/limits are **not** durable global billing protection across serverless instances or restarts. Configure account-level usage controls before opening public paid processing broadly; rendering, hosting, and transfer incur provider costs. The app remains authentication-free.
+
 Respect copyright and only access/download content you are authorized to use. Never fabricate a successful download, replace a full film with a trailer, edit a signature, or bypass a locked episode.
 
 ## Creator

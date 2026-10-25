@@ -15,7 +15,7 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
     cache.set(file, module.exports)
     const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText
     const req = id => id === "server-only" ? {} : id === "next/server" ? { NextResponse: { json: (data, options) => Response.json(data, options) } } :
-      id.startsWith("@/") ? load(id.slice(2) + ".ts") : id.startsWith(".") ? load(path.resolve(path.dirname(file), id + ".ts")) : require(id)
+      id.startsWith("@/") ? load(id.slice(2) + ".ts") : id.startsWith(".") ? load(path.resolve(path.dirname(file), id + ".ts")) : overrides[id] || require(id)
     new Function("require", "module", "exports", "process", "fetch", code)(req, module, module.exports, { env }, fetcher)
     return module.exports
   }
@@ -23,6 +23,63 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
 }
 const base = (id = "moviebox") => ({ id: "1234567890123456789", title: "Example", poster: "https://pbcdn.aoneroom.com/poster.jpg", year: "2023", description: "A film.", type: "movie", detailPath: "example-slug", url: "", provider: id, genres: ["Horror"] })
 const response = (items = [], sources = []) => ({ items, sources, subtitles: [], seasons: [], episodes: [], audioTracks: [] })
+
+test("watermarked exports retain full duration, audio and portrait aspect ratio", () => {
+  const {watermarkEdit}=sandbox()("lib/video-exports.ts")
+  const edit=watermarkEdit("https://cdn.hakunaymatata.com/source.mp4",1080,1920)
+  assert.deepEqual(edit.output.size,{width:1080,height:1920})
+  const [watermark,video]=edit.timeline.tracks.map(track=>track.clips[0])
+  assert.equal(watermark.asset.text,"TV ROOM GAGA")
+  assert.equal(watermark.length,"alias://source")
+  assert.equal(video.length,"auto")
+  assert.equal(video.asset.volume,1)
+  assert.equal(edit.output.format,"mp4")
+})
+test("background export validates source keys, deduplicates renders and conceals job identifiers", async () => {
+  const calls=[]
+  const sdk={ReplitConnectors:class{async proxy(connector,path,options){
+    calls.push({path,options})
+    return Response.json({success:true,response:path.includes("/probe/")?{metadata:{format:{duration:"12"},streams:[{codec_type:"video",width:1280,height:720}]}}:{id:"12345678-1234-1234-1234-123456789012"}})
+  }}}
+  const load=sandbox({"@replit/connectors-sdk":sdk})
+  const {seal}=load("lib/library/tokens.ts")
+  const {startVideoExport}=load("lib/video-exports.ts")
+  const mediaKey=seal("media",{url:"https://cdn.hakunaymatata.com/source.mp4",kind:"video",title:"Test film"})
+  const [first,second]=await Promise.all([startVideoExport(mediaKey),startVideoExport(mediaKey)])
+  assert.equal(first.key,second.key)
+  assert.equal(first.title,"Test film")
+  assert.ok(!first.key.includes("12345678"))
+  assert.equal(calls.filter(call=>call.path==="/edit/v1/render").length,1)
+  await assert.rejects(()=>startVideoExport(seal("media",{url:"https://cdn.hakunaymatata.com/live.m3u8",kind:"video",format:"HLS"})),/adaptive/)
+  await assert.rejects(()=>startVideoExport(seal("media",{url:"https://cdn.hakunaymatata.com/file.mp3",kind:"audio"})),/original video/)
+  await assert.rejects(()=>startVideoExport(seal("media",{url:"https://evil.example/movie.mp4",kind:"video"})),/host/)
+})
+test("render status only offers a processed attachment after done and validates output bucket", async () => {
+  let result={status:"rendering"}
+  const sdk={ReplitConnectors:class{async proxy(){return Response.json({success:true,response:result})}}}
+  const load=sandbox({"@replit/connectors-sdk":sdk})
+  const {seal,unseal}=load("lib/library/tokens.ts")
+  const {videoExportStatus}=load("lib/video-exports.ts")
+  const key=seal("video-export",{id:"12345678-1234-1234-1234-123456789012",title:"Test"})
+  assert.deepEqual(await videoExportStatus(key),{status:"rendering"})
+  result={status:"failed"}
+  assert.equal((await videoExportStatus(key)).downloadUrl,undefined)
+  result={status:"done",url:"https://untrusted-bucket.s3.amazonaws.com/video.mp4"}
+  await assert.rejects(()=>videoExportStatus(key),/verified/)
+  result={status:"done",url:"https://shotstack-api-v1-output.s3-ap-southeast-2.amazonaws.com/video.mp4"}
+  const done=await videoExportStatus(key)
+  const media=unseal(new URL(done.downloadUrl,"https://app.example").searchParams.get("key"),"media")
+  assert.equal(media.branded,true)
+  assert.equal(media.kind,"video")
+  assert.equal(done.status,"done")
+})
+test("render submissions reject cross-origin and unconfirmed requests", async () => {
+  const {POST}=sandbox()("app/api/video-exports/route.ts")
+  const bad=await POST(new Request("https://app.example/api/video-exports",{method:"POST",headers:{host:"app.example",origin:"https://evil.example"},body:"{}"}))
+  assert.equal(bad.status,403)
+  const unconfirmed=await POST(new Request("https://app.example/api/video-exports",{method:"POST",headers:{host:"app.example",origin:"https://app.example"},body:"{}"}))
+  assert.equal(unconfirmed.status,400)
+})
 
 test("title keys conceal integration data, authenticate changes and enforce purpose/expiry", () => {
   const { seal, unseal } = sandbox()("lib/library/tokens.ts")
@@ -327,4 +384,66 @@ test("full-song request resolves the title instead of saving the Apple preview",
   assert.equal(playback.isPreview,false)
   assert.equal(playback.downloadUrl,undefined)
   assert.ok(playback.audioUrl.startsWith("/api/media?key="))
+})
+
+test("new media services are preferred, and fast success does not call the legacy fallback",async()=>{
+  const {preferPrimary}=sandbox()("lib/providers/fallback.ts")
+  let fallback=0
+  assert.equal(await preferPrimary([async()=>"primary"],[async()=>{fallback++;return "old"}],5),"primary")
+  await new Promise(resolve=>setTimeout(resolve,15))
+  assert.equal(fallback,0)
+  assert.equal(await preferPrimary([async()=>{throw new Error("down")}],[async()=>{fallback++;return "old"}],1000),"old")
+  assert.equal(fallback,1)
+})
+test("a slow primary is hedged by a working legacy connection",async()=>{
+  const {preferPrimary}=sandbox()("lib/providers/fallback.ts")
+  assert.equal(await preferPrimary([()=>new Promise(()=>{})],[async()=>"fallback"],5),"fallback")
+})
+test("playlist links are validated and silent adaptive tracks are not complete videos",()=>{
+  const youtube=sandbox()("lib/music/youtube.ts")
+  assert.equal(youtube.youtubePlaylist("https://www.youtube.com/playlist?list=PLabcdefgh1234"),"https://www.youtube.com/playlist?list=PLabcdefgh1234")
+  assert.equal(youtube.youtubePlaylist("https://youtube.com.evil.test/playlist?list=PLabcdefgh1234"),"")
+  const data={data:{formats:[
+    {type:"video_only",mimeType:"video/mp4",url:"https://cdn.aoneroom.com/silent"},
+    {type:"audio",mimeType:"audio/mp4",url:"https://cdn.aoneroom.com/audio"},
+    {type:"video_with_audio",mimeType:"video/mp4",url:"https://cdn.aoneroom.com/muxed"},
+  ]}}
+  assert.deepEqual(youtube.youtubeFiles(data,"video"),["https://cdn.aoneroom.com/muxed"])
+  assert.deepEqual(youtube.youtubeFiles(data,"audio"),["https://cdn.aoneroom.com/audio"])
+})
+test("full-media resolver uses new Nayan endpoints before the old downloader",async()=>{
+  const original=sandbox()("lib/providers/http.ts"),calls=[]
+  const load=sandbox({[path.resolve("lib/providers/http.ts")]:{...original,providerJson:async url=>{
+    calls.push(url)
+    return {data:{title:"Full song",audio:"https://cdn.aoneroom.com/full"}}
+  }}},async()=>new Response("audio",{headers:{"content-type":"audio/mpeg"}}))
+  const result=await load("lib/music/youtube.ts").resolveYoutube("https://youtu.be/YQHsXMglC9A","audio")
+  assert.equal(result.isPreview,false)
+  assert.ok(calls.some(url=>url.includes("/ytdown?")))
+  assert.ok(calls.some(url=>url.includes("/youtube?")))
+  assert.ok(calls.every(url=>!url.includes("knightbotapi")))
+})
+test("media download falls back from a dead download URL and HEAD only probes one byte",async()=>{
+  const calls=[]
+  const load=sandbox({},async(url,options)=>{
+    calls.push({url:String(url),range:options.headers.Range})
+    if(String(url).includes("/dead"))return new Response("not found",{status:404})
+    return new Response("v",{status:206,headers:{"content-type":"video/mp4","content-range":"bytes 0-0/1000"}})
+  })
+  const key=load("lib/library/tokens.ts").seal("media",{url:"https://cdn.aoneroom.com/dead",fallbacks:["https://cdn.aoneroom.com/file"],title:"Example",kind:"video"})
+  const response=await load("app/api/media/route.ts").HEAD(new Request(`https://app.test/api/media?key=${key}&download=1`))
+  assert.equal(response.status,206)
+  assert.match(response.headers.get("content-disposition"),/attachment/)
+  assert.equal(await response.text(),"")
+  assert.equal(calls.length,2)
+  assert.ok(calls.every(call=>call.range==="bytes=0-0"))
+})
+test("returned video quality is reported honestly instead of relabeling a lower resolution",async()=>{
+  const original=sandbox()("lib/providers/http.ts")
+  const load=sandbox({[path.resolve("lib/providers/http.ts")]:{...original,providerJson:async()=>({
+    data:{title:"Example video",formats:[{type:"video_with_audio",mimeType:"video/mp4",quality:"360p",url:"https://cdn.aoneroom.com/muxed"}]},
+  })}},async()=>new Response("video",{headers:{"content-type":"video/mp4"}}))
+  const result=await load("lib/music/youtube.ts").resolveYoutube("https://youtu.be/YQHsXMglC9A","video","","1080p")
+  assert.equal(result.quality,"360p")
+  assert.equal(result.format,"MP4")
 })

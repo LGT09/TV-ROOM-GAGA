@@ -20,3 +20,9 @@ Home and Music play buttons request full audio by default. Chart samples remain 
 Open **Media downloader → YouTube Media Tools** to paste a YouTube link or type a song/artist. Select a result to play full audio, watch its video inside the website, or download either format. Video carries the TV ROOM GAGA watermark. External media can still be removed, denied, or unavailable; the app reports failure rather than substituting a short preview.
 
 Downloads and playback are relayed through opaque same-origin links. Only configured media/CDN hosts are accepted, including validated redirects. Use these tools only for material you are authorized to access or save.
+
+## Background video watermarking
+
+Replit’s connected Shotstack account works in the Replit runtime through its connectors SDK. That runtime identity does **not** automatically transfer to Vercel. For Vercel, add your production Shotstack credential as the encrypted, server-only `SHOTSTACK_API_KEY` environment variable, then redeploy. Do not use a `NEXT_PUBLIC_` name or commit it. The app uses production `/edit/v1`, not sandbox credentials.
+
+Without a working connection/credential, watermark processing returns an explicit error; it never silently offers the original unbranded video instead. Shotstack performs the long render outside the server function. The browser polls short status requests, then downloads the output through the existing secure media relay. Set account-level usage controls before broadly enabling this paid feature on the authentication-free public app; local browser/server-instance limits are not a global spending cap.

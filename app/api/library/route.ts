@@ -3,6 +3,7 @@ import { libraryDetail, libraryList, libraryStream } from "@/lib/library/service
 import { ProviderError } from "@/lib/providers/http"
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 export async function GET(request: Request) {
   const p = new URL(request.url).searchParams
   const action = p.get("action") || "list"

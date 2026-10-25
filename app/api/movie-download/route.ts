@@ -3,6 +3,7 @@ import { libraryDetail, libraryList, libraryStream } from "@/lib/library/service
 import { ProviderError } from "@/lib/providers/http"
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 export async function GET(request: Request) {
   const p = new URL(request.url).searchParams
   try {
@@ -20,7 +21,8 @@ export async function GET(request: Request) {
     const detail = await libraryDetail(p.get("key") || "")
     if (detail.seasons.length && (!p.get("season") || !p.get("episode"))) throw new ProviderError("Choose a season and episode in Movies & series before downloading.", 409)
     const data = await libraryStream(detail.item.key, p)
-    const best = [...data.sources].filter(s => s.downloadUrl).sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0]
+    const files=[...data.sources].filter(s=>s.downloadUrl)
+    const best = files.find(s=>s.quality===p.get("quality"))||files.sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0]
     if (!best) throw new ProviderError("No downloadable file is available for this selection.", 502)
     return NextResponse.json({ success: true, source: "TV Room", title: detail.item.title, filename: `${detail.item.title}.mp4`, downloadUrl: best.downloadUrl, quality: best.quality, downloadLinks: data.sources.filter(s => s.downloadUrl).map(s => ({ url: s.downloadUrl, quality: s.quality })) })
   } catch (e) {

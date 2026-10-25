@@ -6,10 +6,11 @@ import { AlertCircle, ArrowDownToLine, Headphones, Link2, LoaderCircle, Play, Se
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MediaPlayback } from "@/components/media-playback"
+import { CheckedDownload } from "@/components/checked-download"
 
 type YouTubeItem = { id: string; title: string; thumbnail: string; duration: string; author: string; url: string }
 type SearchResponse = { success: boolean; items?: YouTubeItem[]; error?: string }
-type MediaResponse = { success: boolean; title?: string; downloadUrl?: string; playUrl?: string; format?: "mp3" | "mp4"; quality?: string; isPreview?: boolean; error?: string }
+type MediaResponse = { success: boolean; title?: string; downloadUrl?: string; playUrl?: string; format?: string; quality?: string; isPreview?: boolean; error?: string }
 type ActivePlayback = { kind: "audio" | "video"; title: string; url: string }
 type ReadyDownload = { title: string; url: string; format: string; quality?: string }
 
@@ -119,7 +120,7 @@ export function YoutubeMediaTools() {
       if (data.isPreview) throw new Error("A preview is not available for full playback. Choose another result.")
       if (isDownload) {
         if (!data.downloadUrl) throw new Error("A download link was not returned. Please retry.")
-        setDownload({ title: data.title || item.title, url: data.downloadUrl, format: isVideo ? "MP4 video" : "MP3 audio", quality: isVideo ? data.quality || "720p" : undefined })
+        setDownload({ title: data.title || item.title, url: data.downloadUrl, format: `${(data.format||(isVideo?"video":"audio")).toUpperCase()} ${isVideo?"video":"audio"}`, quality: isVideo ? data.quality || "Auto" : undefined })
         setPlayback(null)
         return
       }
@@ -147,7 +148,7 @@ export function YoutubeMediaTools() {
 
   return <section className="glass-card rounded-3xl p-5 md:p-7 space-y-6" aria-label="YouTube media tools">
     <div>
-      <p className="text-sm font-semibold">Search YouTube or paste a video link</p>
+      <p className="text-sm font-semibold">Search YouTube or paste a video or playlist link</p>
       <p className="text-sm text-muted-foreground mt-1">Find a full track or video, then listen, watch, or download it.</p>
     </div>
     <form onSubmit={runSearch} className="space-y-3">
@@ -187,7 +188,7 @@ export function YoutubeMediaTools() {
         <Button type="button" variant="outline" disabled={!!working} onClick={() => resolve(activeItem, "audio")}><Headphones className="h-4 w-4 mr-2"/>Play full audio</Button>
         <Button type="button" variant="outline" disabled={!!working} onClick={() => resolve(activeItem, "video")}><Play className="h-4 w-4 mr-2"/>Watch video</Button>
         <Button type="button" disabled={!!working} onClick={() => resolve(activeItem, "download-audio")}><ArrowDownToLine className="h-4 w-4 mr-2"/>Download full audio</Button>
-        <Button type="button" disabled={!!working} onClick={() => resolve(activeItem, "download-video")}><ArrowDownToLine className="h-4 w-4 mr-2"/>Download video · 720p</Button>
+        <Button type="button" disabled={!!working} onClick={() => resolve(activeItem, "download-video")}><ArrowDownToLine className="h-4 w-4 mr-2"/>Download video</Button>
       </div>
       {working && <p role="status" className="text-xs text-muted-foreground">{working.startsWith("download") ? "Preparing your download…" : "Preparing full playback…"}</p>}
     </div>}
@@ -201,7 +202,7 @@ export function YoutubeMediaTools() {
     </div>}
     {download && <div role="status" className="rounded-2xl border border-primary/25 bg-primary/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex-1 min-w-0"><p className="font-semibold text-sm truncate">{download.title}</p><p className="text-xs text-muted-foreground mt-1">{download.format}{download.quality ? ` · ${download.quality}` : ""} · full media</p></div>
-      <Button asChild className="shrink-0"><a href={download.url} download><ArrowDownToLine className="h-4 w-4 mr-2"/>Save file</a></Button>
+       <CheckedDownload url={download.url} label="Save file"/>
     </div>}
   </section>
 }

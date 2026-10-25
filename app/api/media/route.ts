@@ -4,7 +4,7 @@ import { allowedMediaUrl, mediaFetch } from "@/lib/providers/media-url"
 import { ProviderError } from "@/lib/providers/http"
 import { seal, unseal } from "@/lib/library/tokens"
 
-type MediaToken = { url: string; title?: string; kind: string; format?: string }
+type MediaToken = { url: string; title?: string; kind: string; format?: string; fallbacks?: string[]; branded?:boolean }
 export const dynamic = "force-dynamic"
 export async function GET(request: Request) {
   try {
@@ -12,7 +12,20 @@ export async function GET(request: Request) {
     const token = unseal<MediaToken>(p.get("key") || "", "media")
     const range = request.headers.get("range")
     if (range && !/^bytes=\d+-\d*$/.test(range)) throw new ProviderError("Invalid byte range.", 416)
-    const response = await mediaFetch(token.url, range ? { Range: range } : {})
+    let response:Response|undefined
+    let lastError:unknown
+    for(const url of [token.url,...(Array.isArray(token.fallbacks)?token.fallbacks.slice(0,2):[])]) {
+      try {
+        const candidate=await mediaFetch(url,range?{Range:range}:{},8000)
+        if(/text\/html|application\/json/i.test(candidate.headers.get("content-type")||"")){
+          await candidate.body?.cancel()
+          throw new ProviderError("The media file is unavailable.")
+        }
+        response=candidate
+        break
+      }catch(error){lastError=error}
+    }
+    if(!response)throw lastError||new ProviderError("The media file is unavailable.")
     const type = response.headers.get("content-type") || (token.kind === "image" ? "image/jpeg" : token.kind==="audio"?"audio/mpeg":"video/mp4")
     if (/text\/html|application\/json/i.test(type)) { await response.body?.cancel(); throw new ProviderError("The media file is unavailable.") }
     const hls = token.format === "HLS" || /mpegurl/i.test(type) || /\.m3u8(?:[?#]|$)/i.test(token.url)
@@ -33,7 +46,9 @@ export async function GET(request: Request) {
       }).join("\n")
       return new Response(manifest, { headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "private, no-store" } })
     }
-    const headers = new Headers({ "Content-Type": type, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" })
+    const headers = new Headers({ "Content-Type": type, "Cache-Control": token.kind==="image"?"private, max-age=3600":"private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" })
+    headers.set("X-TVRoom-Media-Kind",token.kind)
+    if(token.branded)headers.set("X-TVRoom-Watermark","permanent")
     for (const name of ["Content-Range", "Accept-Ranges"]) {
       const value = response.headers.get(name)
       if (value) headers.set(name, value)
@@ -47,4 +62,11 @@ export async function GET(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof ProviderError ? e.message : "The media file could not be loaded. Try another source." }, { status: e instanceof ProviderError ? e.status : 502 })
   }
+}
+export async function HEAD(request:Request) {
+  const headers=new Headers(request.headers)
+  headers.set("range","bytes=0-0")
+  const response=await GET(new Request(request.url,{headers}))
+  await response.body?.cancel()
+  return new Response(null,{status:response.status,headers:response.headers})
 }

@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { AppLayout } from "@/components/app-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { saveMediaFile } from "@/lib/client-download"
 import {
   AlertCircle,
   Disc3,
@@ -250,13 +251,7 @@ export default function MusicPage() {
         `/api/music?${params.toString()}`, controller,
       )
       if (!data.success || !data.downloadUrl) throw new Error("A full-song download isn’t available for this track right now.")
-      const link = document.createElement("a")
-      link.href = data.downloadUrl
-      link.download = `${(data.title || track.trackName).replace(/[\\/:*?"<>|]/g, "").trim() || "track"}.mp3`
-      link.rel = "noopener"
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
+      await saveMediaFile(data.downloadUrl,undefined,controller.signal)
     } catch (reason) {
       setActionError({
         key,

@@ -2,10 +2,21 @@ import "server-only"
 import { providerJson, ProviderError, webUrl } from "../providers/http"
 import { mediaFetch, allowedMediaUrl } from "../providers/media-url"
 import { seal } from "../library/tokens"
+import { preferPrimary } from "../providers/fallback"
 
 const base="https://nayan-video-downloader.vercel.app"
 const cache=new Map<string,{until:number;value:any}>()
 const pending=new Map<string,Promise<any>>()
+const searchCache=new Map<string,{until:number;value:any[]}>()
+const searchPending=new Map<string,Promise<any[]>>()
+export function youtubePlaylist(input:string) {
+  try {
+    const u=new URL(input)
+    if(!["https:","http:"].includes(u.protocol)||!["youtube.com","www.youtube.com","m.youtube.com","music.youtube.com"].includes(u.hostname))return ""
+    const id=u.searchParams.get("list")||""
+    return /^[\w-]{10,200}$/.test(id)?`https://www.youtube.com/playlist?list=${id}`:""
+  }catch{return ""}
+}
 export function youtubeUrl(input:string) {
   try {
     const u=new URL(input)
@@ -16,7 +27,7 @@ export function youtubeUrl(input:string) {
   }catch{return ""}
 }
 export function youtubeItems(data:any):any[] {
-  const rows=data?.items||data?.results||data?.result||data?.data?.results||data?.data||[]
+  const rows=data?.items||data?.results||data?.videos||data?.data?.results||data?.data?.videos||data?.result?.videos||data?.result||data?.data||[]
   if(!Array.isArray(rows))return []
   return rows.flatMap(v=>{
     const url=youtubeUrl(v.url||v.link||`https://youtu.be/${v.videoId||v.id||""}`)
@@ -26,10 +37,16 @@ export function youtubeItems(data:any):any[] {
       author:typeof v.author==="string"?v.author:v.author?.name||v.channel?.name||v.channel||"",url}]
   })
 }
-export async function youtubeSearch(input:string) {
+async function search(input:string) {
   const term=input.trim()
   if(!term||term.length>500)throw new ProviderError("Enter a song title, artist or YouTube video link.",400)
   const url=youtubeUrl(term)
+  const playlist=youtubePlaylist(term)
+  if(playlist) {
+    const items=youtubeItems(await providerJson(`${base}/ytsearch/playlist?${new URLSearchParams({url:playlist})}`,9000))
+    if(items.length)return items.slice(0,100)
+    throw new ProviderError("This playlist has no accessible videos.",404)
+  }
   if(/^https?:\/\//i.test(term)&&!url)throw new ProviderError("Enter a valid YouTube video link.",400)
   if(url) {
     const id=new URL(url).searchParams.get("v")!
@@ -42,6 +59,19 @@ export async function youtubeSearch(input:string) {
   }
   throw new ProviderError("YouTube search is temporarily unavailable. Try a direct video link.",502)
 }
+export async function youtubeSearch(input:string):Promise<any[]> {
+  const key=input.trim()
+  const hit=searchCache.get(key)
+  if(hit&&hit.until>Date.now())return hit.value
+  if(searchPending.has(key))return searchPending.get(key)!
+  const job=search(key).then(value=>{
+    if(searchCache.size>=60)searchCache.delete(searchCache.keys().next().value!)
+    searchCache.set(key,{until:Date.now()+120000,value})
+    return value
+  }).finally(()=>searchPending.delete(key))
+  searchPending.set(key,job)
+  return job
+}
 export function youtubeFiles(data:any,kind:"audio"|"video"):string[] {
   const r=data?.result||data?.data||data
   if(!r||typeof r!=="object")return []
@@ -50,8 +80,12 @@ export function youtubeFiles(data:any,kind:"audio"|"video"):string[] {
     ?[r.audio?.url,r.mp3?.url,r.audio_url,r.audioUrl,typeof r.audio==="string"?r.audio:"",typeof r.mp3==="string"?r.mp3:"",r.download,r.downloadUrl,r.download_url,r.dl_url,r.dl]
     :[r.video_hd,r.video?.url,r.mp4?.url,typeof r.video==="string"?r.video:"",r.video_url,r.download,r.downloadUrl,r.download_url,r.dl_url,r.dl]
   for(const m of [...(Array.isArray(r.medias)?r.medias:[]),...(Array.isArray(r.formats)?r.formats:[])]) {
-    const type=String(m.mimeType||m.type||m.extension||m.format||"")
-    if(kind==="audio"?/audio|mp3|m4a|aac|ogg/i.test(type):/video|mp4|webm/i.test(type))values.push(m.url||m.downloadUrl)
+    const type=String(m.type||"")
+    const mime=String(m.mimeType||m.extension||m.ext||m.format||"")
+    // Adaptive video-only tracks are silent, and must not be offered as complete videos.
+    if(/video_only|audio_only/.test(type)&&!(kind==="audio"&&type==="audio_only"))continue
+    if(kind==="audio"?/^audio/.test(type)||/^audio\//.test(mime)||/^(mp3|m4a|aac|ogg)$/.test(mime):
+      !/^audio/.test(type)&&m.hasAudio!==false&&(/video|mp4|webm/i.test(type+" "+mime)))values.push(m.url||m.downloadUrl)
   }
   if(r.url&&!youtubeUrl(r.url))values.push(r.url)
   return [...new Set(values.map(v=>typeof v==="string"?webUrl(v):"").filter(Boolean))].filter(url=>{
@@ -86,23 +120,23 @@ export async function resolveYoutube(input:string,kind:"audio"|"video",title="",
         if(source&&kind==="audio")params.set("type","mp3")
         if(source&&kind==="video")params.set("format",quality)
         const endpoint=source?(kind==="audio"?"download":"download/ytmp4"):(kind==="audio"?"ytmp3":"ytmp4")
-        const urls=[`https://knightbotapi.stream/api/${endpoint}?${params}`]
-        if(source)urls.push(...["ytdown","alldown"].map(action=>`${base}/${action}?${new URLSearchParams({url:source})}`))
-        const attempts=urls.map(async target=>{
-          const data=await providerJson(target,12000)
+         const from=async(target:string,fallbackTitle=title)=>{
+           const data=await providerJson(target,9000)
           const files=youtubeFiles(data,kind)
           if(!files.length)throw new Error("No full file")
           const media=await Promise.any(files.map(url=>verify(url,kind)))
-          return {...media,title:String(data.result?.title||data.data?.title||data.title||title||"YouTube media")}
-        })
-        if(query)attempts.push((async()=>{
-          const match=(await youtubeSearch(query))[0]
-          const data=await providerJson(`${base}/ytdown?${new URLSearchParams({url:match.url})}`,12000)
-          const files=youtubeFiles(data,kind)
-          if(!files.length)throw new Error("No full file")
-          return {...await Promise.any(files.map(url=>verify(url,kind))),title:match.title}
-        })())
-        try{return await Promise.any(attempts)}catch{throw new ProviderError(`Full ${kind} is temporarily unavailable from the media services. Retry or choose another video.`,502)}
+           const info=data.result||data.data||data
+           const file=[...(Array.isArray(info.formats)?info.formats:[]),...(Array.isArray(info.medias)?info.medias:[])].find(item=>(item.url||item.downloadUrl)===media.url)
+           const returnedQuality=String(file?.quality||file?.resolution||file?.label||info.quality||"").match(/(\d{3,4})(?:p|\b)/)?.[1]
+           return {...media,quality:kind==="video"?(returnedQuality?`${returnedQuality}p`:"Auto"):undefined,title:String(info.title||data.title||fallbackTitle||"YouTube media")}
+         }
+         const match=source?Promise.resolve({url:source,title}):youtubeSearch(query).then(items=>items[0])
+         const primary=["ytdown","youtube","alldown"].map(action=>async()=>{
+           const item=await match
+           return from(`${base}/${action}?${new URLSearchParams({url:item.url})}`,item.title)
+         })
+         try{return await preferPrimary(primary,[()=>from(`https://knightbotapi.stream/api/${endpoint}?${params}`)],1200)}
+         catch{throw new ProviderError(`Full ${kind} is temporarily unavailable from the media services. Retry or choose another video.`,502)}
       })().then(value=>{if(cache.size>80)cache.delete(cache.keys().next().value!);cache.set(key,{until:Date.now()+60000,value});return value}).finally(()=>pending.delete(key))
       pending.set(key,job)
     }
@@ -110,5 +144,5 @@ export async function resolveYoutube(input:string,kind:"audio"|"video",title="",
   }
   const token=seal("media",{url:full.url,title:full.title,kind,format:full.format},21600)
   const playUrl=`/api/media?key=${token}`
-  return {success:true,title:full.title,format:full.format,quality,isPreview:false,playUrl,audioUrl:kind==="audio"?playUrl:undefined,downloadUrl:`${playUrl}&download=1`}
+  return {success:true,title:full.title,format:full.format,quality:full.quality||"Auto",isPreview:false,playUrl,audioUrl:kind==="audio"?playUrl:undefined,downloadUrl:`${playUrl}&download=1`}
 }

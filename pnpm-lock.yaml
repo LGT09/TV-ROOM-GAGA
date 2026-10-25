@@ -101,6 +101,9 @@ importers:
       '@react-three/fiber':
         specifier: 9.6.1
         version: 9.6.1(@types/react@19.2.2)(expo-asset@58.0.18(expo@58.0.19)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.2.2)(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(expo-file-system@58.0.11(expo@58.0.19)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.2.2)(react@19.2.0)))(expo-gl@58.0.3(expo@58.0.19)(react-dom@19.2.0(react@19.2.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.2.2)(react@19.2.0))(react@19.2.0))(expo@58.0.19)(react-dom@19.2.0(react@19.2.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.2.2)(react@19.2.0))(react@19.2.0)(three@0.184.0)
+      '@replit/connectors-sdk':
+        specifier: ^0.5.0
+        version: 0.5.0
       '@sl-code-lords/movie-api':
         specifier: ^1.0.0
         version: 1.0.0
@@ -1835,6 +1838,9 @@ packages:
         optional: true
       react-native:
         optional: true
+
+  '@replit/connectors-sdk@0.5.0':
+    resolution: {integrity: sha512-SQ0AWe/CE7ZOhn0zFxAReDJceHkC+r2pwot4ktE8luSeyx3xOYES9W/L4X5RFklvJ1CD+GTTN1GyXVCjH4N7jQ==}
 
   '@sinclair/typebox@0.27.12':
     resolution: {integrity: sha512-hhyNJ+nbR6ZR7pToHvllEFun9TL0sbL+tk/ON75lo+Xas054uez98qRbsuNt7MBCyZKK4+8Yli/OAGZhmfBZ/g==}
@@ -6118,6 +6124,8 @@ snapshots:
     transitivePeerDependencies:
       - '@types/react'
       - immer
+
+  '@replit/connectors-sdk@0.5.0': {}
 
   '@sinclair/typebox@0.27.12': {}
 

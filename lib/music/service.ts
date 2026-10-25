@@ -2,7 +2,7 @@ import "server-only"
 import { providerJson, ProviderError, webUrl } from "../providers/http"
 import { allowedMediaUrl } from "../providers/media-url"
 import { seal } from "../library/tokens"
-import { resolveYoutube } from "./youtube"
+import { resolveYoutube, youtubeSearch } from "./youtube"
 
 const base="https://nayan-video-downloader.vercel.app"
 const cache=new Map<string,{until:number;data:any}>()
@@ -36,7 +36,7 @@ export async function musicList(query="",trending=false) {
   return cached(`list:${trending?"trending:":""}${query}`,120000,async()=>{
     if(query) {
       try{
-        const items=searchTracks(await providerJson(`${base}/ytsearch?${new URLSearchParams({q:query})}`,5000))
+        const items=searchTracks({results:await youtubeSearch(query)})
         if(items.length)return {results:items,message:"Search results. Release dates are shown when supplied."}
       }catch{}
     }

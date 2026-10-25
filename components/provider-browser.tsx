@@ -6,6 +6,9 @@ import { AlertCircle, ArrowLeft, ArrowRight, Film, Headphones, Play, Search, Dow
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MediaPlayback } from "@/components/media-playback"
+import { CheckedDownload } from "@/components/checked-download"
+import { readApiJson } from "@/lib/client-json"
+import { cachedCatalogue, rememberCatalogue } from "@/lib/client-catalogue"
 
 type LibraryItem = { key: string; title: string; poster: string; description: string; year: string | number; type: string; rating?: number; genres?: string[] }
 type Season = { season: number; episode_count: number }
@@ -21,7 +24,7 @@ const detailCache=new Map<string,Promise<Detail>>()
 function titleDetails(item:LibraryItem):Promise<Detail>{
   if(detailCache.has(item.key))return detailCache.get(item.key)!
   const job=fetch(`/api/library?action=detail&key=${encodeURIComponent(item.key)}`,{signal:AbortSignal.timeout(15000),cache:"no-store"}).then(async response=>{
-    const data=await response.json()
+    const data=await readApiJson(response)
     if(!response.ok||data.success===false)throw new Error(data.error||"Title details are unavailable.")
     return {item:data.item||item,seasons:data.seasons||[],episodes:data.episodes||[],audioTracks:data.audioTracks||[],message:data.message} as Detail
   }).catch(error=>{detailCache.delete(item.key);throw error})
@@ -75,23 +78,30 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
     controllerRef.current = controller
     const params = new URLSearchParams({ action: "list", q: submittedQuery.trim(), category, type, page: String(targetPage), limit: String(targetLimit) })
     const cacheKey = params.toString()
-    const cached = listCache.get(cacheKey)
+    const cached = listCache.get(cacheKey)||cachedCatalogue<Listing>(cacheKey)
     if (cached) setListing(cached)
+    if(!navigator.onLine){
+      setLoading(false)
+      setError(cached?"You’re offline. Showing recent catalogue results; playback and downloads need a connection.":"You’re offline. Reconnect to load the catalogue.")
+      return
+    }
     setLoading(true)
     setError("")
     const timeout = window.setTimeout(() => controller.abort(), 20000)
     try {
       const response = await fetch(`/api/library?${params}`, { signal: controller.signal, cache: "no-store" })
-      const data = await response.json()
+      const data = await readApiJson(response)
       if(controller.signal.aborted||controllerRef.current!==controller)return
       if (!response.ok || data.success === false) throw new Error(data.error || data.message || "The library could not be loaded.")
       const next: Listing = { items: data.items || [], page: data.page || targetPage, limit: data.limit || targetLimit, hasNext: Boolean(data.hasNext), categories: data.categories || categoriesFallback, message: data.message }
       listCache.set(cacheKey, next)
+      if(listCache.size>12)listCache.delete(listCache.keys().next().value!)
+      rememberCatalogue(cacheKey,next)
       setListing(next)
     } catch (cause) {
       if (controllerRef.current === controller) {
         if (controller.signal.aborted) setError("This is taking longer than expected. Check your connection and try again.")
-        else setError(cause instanceof Error ? cause.message : "The library could not be loaded.")
+        else setError((cause instanceof Error ? cause.message : "The library could not be loaded.")+(cached?" Showing recent catalogue results.":""))
       }
     } finally {
       window.clearTimeout(timeout)
@@ -100,9 +110,15 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
   }, [category, limit, page, submittedQuery, type])
 
   useEffect(() => { void loadList(page, limit); return () => controllerRef.current?.abort() }, [loadList, page, limit])
+  useEffect(()=>{
+    const retry=()=>{void loadList(page,limit)}
+    window.addEventListener("online",retry)
+    return()=>window.removeEventListener("online",retry)
+  },[loadList,page,limit])
   useEffect(() => () => { detailController.current?.abort(); streamController.current?.abort() }, [])
 
   const openItem = async (item: LibraryItem) => {
+    if(!navigator.onLine){setError("Reconnect to open this title. Streaming and downloads require a connection.");return}
     detailController.current?.abort()
     streamController.current?.abort()
     const controller = new AbortController()
@@ -132,6 +148,7 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
   useEffect(()=>{if(selected&&detail&&!detailLoading&&!isSeries)void playItem()},[selected?.key,detailLoading])
   const playItem = async (audioKey?: string, nextRetry = 0, requestedEpisode?: Episode) => {
     if (!selected) return
+    if(!navigator.onLine){setStreamError("You’re offline. Reconnect to prepare playback and downloads.");return}
     streamController.current?.abort()
     const controller = new AbortController()
     streamController.current = controller
@@ -145,9 +162,9 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
     if (chapter?.id) params.set("chapter", chapter.id)
     try {
       const response = await fetch(`/api/library?${params}`, { cache: "no-store", signal: controller.signal })
-      const data = await response.json()
-      if(controller.signal.aborted||streamController.current!==controller)return
       setStreamPreparing(response.status===425)
+      const data = await readApiJson(response)
+      if(controller.signal.aborted||streamController.current!==controller)return
       if (!response.ok || data.success === false) throw new Error(data.error || data.message || "No playable source was returned.")
       const result: Stream = { sources: data.sources || [], subtitles: data.subtitles || [], message: data.message }
       setStream(result)
@@ -243,7 +260,7 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
       {stream?.sources?.length ? <section className="space-y-3 border-t border-border/70 pt-4">
         <h3 className="font-display text-lg">Playback</h3>
         <MediaPlayback key={`${stream.sources[0].url}-${retry}`} src={stream.sources[0].url} title={selected.title} subtitles={stream.subtitles} alternateSources={stream.sources.slice(1).map(source => ({ url: source.url, label: source.label, quality: source.quality }))} />
-        <div className="flex flex-wrap gap-2">{stream.sources.filter(source => source.downloadUrl && !/\.m3u8(?:$|\?)/i.test(source.downloadUrl || "")).map((source, index) => <a key={`${source.downloadUrl}-${index}`} href={source.downloadUrl} download className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-sm font-medium hover:border-primary/50"><Download className="h-4 w-4" />Download {source.label || source.quality || "file"}{source.format ? ` · ${source.format}` : ""}</a>)}</div>
+        <div className="flex flex-wrap gap-2">{stream.sources.filter(source => source.downloadUrl && !/\.m3u8(?:$|\?)/i.test(source.downloadUrl || "")).map((source, index) => <CheckedDownload key={`${source.downloadUrl}-${index}`} url={source.downloadUrl!} label={`Download ${source.label||source.quality||"file"}${source.format?` · ${source.format}`:""}`}/>)}</div>
         {stream.message && <p className="text-xs text-muted-foreground">{stream.message}</p>}
       </section> : null}
     </div>}

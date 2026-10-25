@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 import { providerJson, ProviderError, webUrl } from "@/lib/providers/http"
 import { resolveYoutube } from "@/lib/music/youtube"
+import { preferPrimary } from "@/lib/providers/fallback"
+import { allowedMediaUrl } from "@/lib/providers/media-url"
+import { seal } from "@/lib/library/tokens"
 
 const BASE = "https://knightbotapi.stream/api"
 const platforms = ["youtube-audio", "youtube-video", "facebook", "instagram", "tiktok"]
@@ -15,7 +18,14 @@ function normalize(data: any, platform: string) {
   const seen = new Set<string>()
   const add = (value: any, label: string, quality = "") => {
     const url = webUrl(value)
-    if (url && !seen.has(url)) { seen.add(url); links.push({ label, url, quality }) }
+    if (url && !seen.has(url)) {
+      try {
+        allowedMediaUrl(url)
+        seen.add(url)
+        const kind=/audio|music|mp3/i.test(label)?"audio":"video"
+        links.push({label:/audio|music|mp3/i.test(label)?"Download audio":"Download video",url:`/api/media?key=${seal("media",{url,kind,title:String(info.title||data.title||"Media download")},21600)}&download=1`,quality})
+      }catch{/* A page URL or an unknown host is not a downloadable file. */}
+    }
   }
   const walk = (v: any, depth = 0, label = "Download") => {
     if (!v || depth > 7) return
@@ -23,7 +33,7 @@ function normalize(data: any, platform: string) {
     if (Array.isArray(v)) { v.forEach((m, i) => walk(m, depth + 1, `Media ${i + 1}`)); return }
     if (typeof v !== "object") return
     const quality = String(v.quality || v.resolution || "")
-    for (const key of ["download_url", "downloadUrl", "dl_url", "dl", "url", "link", "video", "nowatermark", "no_watermark", "watermark", "hd", "sd", "hd_url", "sd_url", "audio", "music", "mp3", "mp4", "play"]) {
+    for (const key of ["download", "download_url", "downloadUrl", "dl_url", "dl", "url", "link", "video", "nowatermark", "no_watermark", "watermark", "hd", "sd", "high", "low", "hd_url", "sd_url", "audio", "music", "mp3", "mp4", "play"]) {
       if (typeof v[key] === "string") add(v[key], v.type || v.label || (quality ? `Download ${quality}` : key.replaceAll("_", " ")), quality)
     }
     for (const key of ["data", "result", "results", "media", "medias", "links", "downloads", "formats", "video", "audio"]) if (typeof v[key] === "object") walk(v[key], depth + 1, label)
@@ -56,20 +66,16 @@ export async function GET(request: Request) {
       const result=await resolveYoutube(input,platform==="youtube-audio"?"audio":"video","",quality)
       return NextResponse.json({...result,platform,links:[{label:`Download full ${platform==="youtube-audio"?"audio":"video"}`,url:result.downloadUrl,quality:result.format}]},{headers:{"Cache-Control":"no-store"}})
     }
-    const query = new URLSearchParams({ apikey: "knight" })
-    let endpoint: string
-    if (isQuery) {
-      endpoint = platform === "youtube-audio" ? "ytmp3" : "ytmp4"
-      query.set("query", input)
-    } else {
-      query.set("url", input)
-      endpoint = platform === "youtube-video" ? "download/ytmp4" : platform === "youtube-audio" ? "download" : `download/${platform}`
-      if (platform === "youtube-video") query.set("format", quality)
-      if (platform === "youtube-audio") query.set("type", "mp3")
-    }
-    const data = await providerJson(`${BASE}/${endpoint}?${query}`, 25000)
-    return NextResponse.json(normalize(data, platform), { headers: { "Cache-Control": "no-store" } })
+    const query = new URLSearchParams({url:input})
+    const endpoint = {tiktok:"tikdown",instagram:"instagram",facebook:"fbdown2"}[platform]
+    const resolve=async(url:string)=>normalize(await providerJson(url,8500),platform)
+    const result=await preferPrimary(
+      [()=>resolve(`https://nayan-video-downloader.vercel.app/${endpoint}?${query}`),
+       ()=>resolve(`https://nayan-video-downloader.vercel.app/alldown?${query}`)],
+      [()=>resolve(`${BASE}/download/${platform}?${new URLSearchParams({apikey:"knight",url:input})}`)],
+      1200)
+    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } })
   } catch (e) {
-    return NextResponse.json({ success: false, links: [], error: e instanceof Error ? e.message : "Download provider unavailable." }, { status: e instanceof ProviderError ? e.status : 502 })
+    return NextResponse.json({ success: false, links: [], error: e instanceof ProviderError ? e.message : "No downloadable file was available after trying alternate connections. Try another public link." }, { status: e instanceof ProviderError ? e.status : 502 })
   }
 }

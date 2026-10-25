@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import type { ContentItem } from "@/lib/types"
+import { readApiJson } from "@/lib/client-json"
+import { saveMediaFile } from "@/lib/client-download"
 
 interface MovieSearchResult {
   id: string
@@ -37,6 +39,7 @@ export function MovieActionModal({ item, open, onOpenChange, onWatch, onDownload
   const [showSearchResults, setShowSearchResults] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null)
+  const [downloadError,setDownloadError]=useState("")
 
   // Auto-search when modal opens with a movie
   useEffect(() => {
@@ -60,7 +63,7 @@ export function MovieActionModal({ item, open, onOpenChange, onWatch, onDownload
       const response = await fetch(
         `/api/movie-download?action=search&query=${encodeURIComponent(title)}&limit=8`
       )
-      const data = await response.json()
+      const data = await readApiJson(response)
 
       if (data.success && data.results && data.results.length > 0) {
         setSearchResults(data.results)
@@ -91,36 +94,27 @@ export function MovieActionModal({ item, open, onOpenChange, onWatch, onDownload
 
     setDownloadingId(movie.id)
     setDownloadSuccess(null)
+    setDownloadError("")
 
     try {
       // First, resolve the direct download link via our API
       const response = await fetch(
         `/api/movie-download?action=download&url=${encodeURIComponent(movie.downloadUrl)}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal:AbortSignal.timeout(30000) }
       )
-      const data = await response.json()
+      const data = await readApiJson(response)
 
       if (data.success && data.downloadUrl) {
         // Trigger actual browser download immediately
-        triggerDownload(data.downloadUrl, data.filename || `${movie.title}.mp4`)
+        await saveMediaFile(data.downloadUrl)
         setDownloadSuccess(movie.id)
         setDownloadingId(null)
         return
       }
-    } catch {
-      // fall through to direct URL
-    }
-
-    // Fallback: use original download URL directly
-    triggerDownload(movie.downloadUrl, `${movie.title}.mp4`)
-    setDownloadSuccess(movie.id)
-    setDownloadingId(null)
-  }
-
-  // Trigger actual file download to user's device
-  const triggerDownload = (url: string, filename: string) => {
-    // Open in new tab for immediate download
-    window.open(url, "_blank")
+      throw new Error(data.error||"No downloadable file was returned.")
+    } catch(error) {
+      setDownloadError(error instanceof Error?error.message:"Download could not start. Try another result.")
+    }finally{setDownloadingId(null)}
   }
 
   const handleWatch = () => {
@@ -187,6 +181,7 @@ export function MovieActionModal({ item, open, onOpenChange, onWatch, onDownload
 
           <Separator />
 
+          {downloadError&&<p role="alert" className="text-sm text-destructive">{downloadError}</p>}
           {/* Movie Search & Download Section */}
           <div className="space-y-3">
             <h3 className="font-semibold flex items-center gap-2">
@@ -267,7 +262,7 @@ export function MovieActionModal({ item, open, onOpenChange, onWatch, onDownload
                       ) : downloadSuccess === movie.id ? (
                         <>
                           <CheckCircle2 className="h-4 w-4 mr-1" />
-                          Done
+                          Prepared
                         </>
                       ) : (
                         <>

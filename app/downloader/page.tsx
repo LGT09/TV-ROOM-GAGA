@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, ArrowDownToLine, ExternalLink, Link2, ShieldCheck } from "lucide-react"
 import { YoutubeMediaTools } from "@/components/youtube-media-tools"
+import { CheckedDownload } from "@/components/checked-download"
 
 type Platform = "tiktok"|"instagram"|"facebook"
 type DownloadResult = {success:boolean;error?:string;title?:string;thumbnail?:string|null;links?:{label:string;url:string;quality?:string}[]}
@@ -59,9 +60,7 @@ function DownloadPanel({platform,hint,placeholder}:{platform:Platform;hint:strin
         {result.thumbnail?<img src={result.thumbnail} alt="" className="h-20 w-28 rounded-xl object-cover bg-muted"/>:<div className="h-20 w-28 rounded-xl bg-muted grid place-items-center"><Link2 className="h-7 w-7 text-primary"/></div>}
         <div><h3 className="font-semibold">{result.title||"Resolved media"}</h3><p className="text-xs text-muted-foreground mt-1">{result.links?.length||0} link options returned by the service</p></div>
       </div>
-      {result.links?.length?<div className="space-y-2">{result.links.map((link,i)=><a key={link.url+i} href={link.url} target="_blank" rel="noopener noreferrer" className="glass rounded-xl px-4 py-3 flex items-center gap-3 text-sm hover:text-primary transition-colors">
-        <ArrowDownToLine className="h-4 w-4"/><span className="flex-1 font-medium">{link.label||"Download"}</span>{link.quality&&<span className="text-xs text-muted-foreground">{link.quality}</span>}<ExternalLink className="h-4 w-4"/>
-      </a>)}</div>:<p className="text-sm text-muted-foreground">The service returned no download options.</p>}
+      {result.links?.length?<div className="space-y-2">{result.links.map((link,i)=><CheckedDownload key={link.url+i} url={link.url} label={`${link.label||"Download"}${link.quality?` · ${link.quality}`:""}`}/>)}</div>:<p className="text-sm text-muted-foreground">The service returned no download options.</p>}
     </div>}
   </div>
 }

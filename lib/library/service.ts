@@ -7,6 +7,7 @@ import type { MediaItem, MediaSource } from "../providers/normalize"
 import { normalizeProvider } from "../providers/normalize"
 import { categories, inCategory, sameTitle } from "./categories"
 import { seal, unseal } from "./tokens"
+import { preferPrimary } from "../providers/fallback"
 
 type Result = { items: MediaItem[]; sources: MediaSource[]; subtitles: {url:string;language:string;label:string}[]; episodes: any[]; seasons: any[]; audioTracks: any[] }
 type Locator = MediaItem
@@ -25,6 +26,10 @@ async function cached<T>(key: string, ttl: number, work: () => Promise<T>): Prom
     if (cache.size > 100) cache.delete(cache.keys().next().value!)
     cache.set(key, { value, expires: Date.now() + ttl })
     return value
+  }).catch(error=>{
+    // Catalogue metadata can survive a short provider outage; never serve stale media URLs.
+    if(key.startsWith("list:")&&hit&&hit.expires+1800000>Date.now())return hit.value
+    throw error
   }).finally(() => pending.delete(key))
   pending.set(key, job)
   return job
@@ -43,17 +48,26 @@ async function attempt(id: string, action: string, p: URLSearchParams): Promise<
 }
 /** Hedged batches: the first useful response wins; empty/error responses trigger the next batch. */
 async function firstUseful(ids: string[], action: string, p: URLSearchParams, accept: (r: Result) => boolean): Promise<Result> {
-  try { const preferred=await attempt(ids[0],action,p); if(accept(preferred))return preferred } catch {}
-  for (let i = 1; i < ids.length; i += 3) {
-    try {
-      return await Promise.any(ids.slice(i, i + 3).map(async id => {
-        const data = await attempt(id, action, p)
-        if (!accept(data)) throw new Error("No matching results")
-        return data
-      }))
-    } catch { /* Try the next compatible group, never expose integration names. */ }
+  const deadline=Date.now()+10000
+  const useful=async(id:string)=>{
+    const data=await attempt(id,action,p)
+    if(!accept(data))throw new Error("No matching results")
+    return data
   }
-  throw new ProviderError("The library is temporarily unavailable after trying alternate connections. Please retry shortly.", 502)
+  const alternatives=async()=>{
+    for(let i=1;i<ids.length&&Date.now()<deadline;i+=3){
+      try{return await Promise.any(ids.slice(i,i+3).map(useful))}catch{}
+    }
+    throw new Error("No matching connections")
+  }
+  let timer:ReturnType<typeof setTimeout>|undefined
+  try {
+    return await Promise.race([
+      preferPrimary([()=>useful(ids[0])],[alternatives],700),
+      new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error("Catalogue deadline")),12000)}),
+    ])
+  }catch{throw new ProviderError("The library is temporarily unavailable after trying alternate connections. Please retry shortly.",502)}
+  finally{clearTimeout(timer)}
 }
 function imageUrl(url: string) {
   if (!url) return ""
@@ -150,7 +164,10 @@ async function routedItem(item: Locator): Promise<Locator> {
   if (!match.length) throw new ProviderError("Details or episodes for this title are not available on the current connections.", 404)
   return { ...item, ...match[0], year:item.year||match[0].year,type:item.type, poster: match[0].poster || item.poster, description: match[0].description || item.description, genres: [...new Set([...(item.genres || []), ...(match[0].genres || [])])] }
 }
-async function preferredByName(item:Locator):Promise<Locator>{
+function preferredByName(item:Locator):Promise<Locator>{
+  return cached(`preferred:${[item.provider,item.id,item.year,item.type,item.taskId].join(":")}`,300000,()=>lookupPreferred(item))
+}
+async function lookupPreferred(item:Locator):Promise<Locator>{
   if(item.provider==="dramabox")return item
   try {
     const result=await attempt("omega-MovieBox-pro","search",new URLSearchParams({q:item.title,page:"1"}))
@@ -173,12 +190,17 @@ async function preferredByName(item:Locator):Promise<Locator>{
 }
 export async function libraryDetail(token: string) {
   const original = unseal<Locator>(token, "item")
+  return cached(`detail:${JSON.stringify(original)}`,120000,()=>loadDetail(original))
+}
+async function loadDetail(original:Locator) {
   const item = await preferredByName(await routedItem(original))
   const p = input(item)
-  const detail = await attempt(item.provider, "detail", p).catch(() => null)
+  const [detail,resources] = await Promise.all([
+    attempt(item.provider,"detail",p).catch(()=>null),
+    (item.provider === "moviebox" || /^omega-Movie[Bb]ox/.test(item.provider)) && item.id!==item.taskId
+      ? attempt("moviebox","resources",p).catch(()=>null):Promise.resolve(null),
+  ])
   const next = { ...item, ...(detail?.items.find(m => m.id === item.id) || {}), genres: [...new Set([...(item.genres || []), ...(detail?.items[0]?.genres || [])])] }
-  let resources: Result | null = null
-  if ((item.provider === "moviebox" || /^omega-Movie[Bb]ox/.test(item.provider)) && item.id!==item.taskId) resources = await attempt("moviebox", "resources", p).catch(() => null)
   const seasons = (resources?.seasons?.length ? resources.seasons : detail?.seasons || []).map((s: any, i: number) => ({
     season: Number(s.season ?? s.seasonNumber ?? s.number ?? i + 1), episode_count: Number(s.episode_count || 0),
   })).filter((s: any) => s.season > 0)
@@ -199,9 +221,10 @@ export async function libraryDetail(token: string) {
     message: !detail ? "Some title information is temporarily unavailable. You can still try playback." : undefined }
 }
 
-function mediaLink(url: string, title: string, format: string) {
+function mediaLink(url: string, title: string, format: string, fallbacks: string[] = []) {
   allowedMediaUrl(url)
-  return `/api/media?key=${seal("media", { url, title, kind: "video", format }, 21600)}${format === "HLS" ? "&format=hls" : format==="DASH"?"&format=dash":""}`
+  fallbacks.forEach(allowedMediaUrl)
+  return `/api/media?key=${seal("media", { url, title, kind: "video", format, ...(fallbacks.length?{fallbacks}:{}) }, 21600)}${format === "HLS" ? "&format=hls" : format==="DASH"?"&format=dash":""}`
 }
 async function usable(source: MediaSource) {
   try {
@@ -227,8 +250,13 @@ async function resolve(item: Locator, p: URLSearchParams): Promise<Result> {
   return { ...data, sources }
 }
 export async function libraryStream(token: string, p: URLSearchParams) {
+  const original=unseal<Locator>(token,"item")
+  const params=new URLSearchParams(p)
+  return cached(`stream:${JSON.stringify(original)}:${["season","episode","chapter","retry"].map(k=>params.get(k)||"").join(":")}`,60000,()=>loadStream(original,params))
+}
+async function loadStream(original:Locator,p:URLSearchParams) {
   const deadline = Date.now() + 20000
-  const item = await preferredByName(await routedItem(unseal<Locator>(token, "item")))
+  const item = await preferredByName(await routedItem(original))
   if (p.get("chapter")?.length && item.provider === "dramabox") {
     // The provider adapter validates public/unlocked chapters; do not search around a lock.
     const detail = await attempt(item.provider, "detail", input(item))
@@ -243,11 +271,16 @@ export async function libraryStream(token: string, p: URLSearchParams) {
   const sharedId = /^(moviebox|omega-Movie[Bb]ox)/.test(item.provider) && item.id!==item.taskId
   const sameId = sharedId ? [...new Set(["omega-MovieBox-pro",item.provider,"moviebox","omega-MovieBox-pro2","omega-Moviebox_off"])] : [item.provider]
   if (Number(p.get("retry")) > 0) sameId.push(sameId.shift()!)
-  for (const provider of sameId) {
-    if (Date.now() > deadline) break
+  let preparing:ProviderError|undefined
+  const fromProvider=async(provider:string)=>{
     tried.add(provider)
-    try { data = await resolve({ ...item, provider }, p); break } catch(e) { if(e instanceof ProviderError&&e.status===425)throw e }
+    try{return await resolve({...item,provider},p)}
+    catch(e){if(e instanceof ProviderError&&e.status===425)preparing=e;throw e}
   }
+  try {
+    data=sameId.length===1?await fromProvider(sameId[0]):
+      await preferPrimary([()=>fromProvider(sameId[0])],sameId.slice(1).map(id=>()=>fromProvider(id)),700)
+  }catch{if(preparing)throw preparing}
   if (!data && item.provider !== "dramabox") {
     if (sameId.includes("moviebox") && Date.now() < deadline) {
       try {
@@ -284,7 +317,7 @@ export async function libraryStream(token: string, p: URLSearchParams) {
       const title = movie ? item.title : `${item.title} S${p.get("season")!.padStart(2,"0")}E${p.get("episode")!.padStart(2,"0")}`
       const url = mediaLink(source.url, title, source.format || "MP4")
       const isFile = !["HLS", "DASH"].includes(source.format || "") && !/\.(m3u8|mpd)(?:[?#]|$)/i.test(source.url)
-      const downloadUrl = isFile ? `${mediaLink(source.download || source.url, title, source.format || "MP4")}&download=1` : undefined
+       const downloadUrl = isFile ? `${mediaLink(source.download || source.url, title, source.format || "MP4", source.download&&source.download!==source.url?[source.url]:[])}&download=1` : undefined
       const resolution=String(source.quality||source.label).match(/\b(\d{3,4})p?\b/)
       const quality=resolution ? `${resolution[1]}p` : "Auto"
       return [{ url, downloadUrl, quality, label:quality, format: source.format }]

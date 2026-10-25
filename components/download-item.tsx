@@ -62,7 +62,7 @@ export function DownloadItemCard({ download, onPause, onResume, onCancel, onRemo
                 </>
               )}
 
-              {status === "completed" && (
+              {(status === "completed" || status === "requested" || status === "processing") && (
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onRemove?.(download.id)}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -77,6 +77,10 @@ export function DownloadItemCard({ download, onPause, onResume, onCancel, onRemo
           </div>
 
           <div className="mt-2 space-y-2">
+            {status==="pending"&&<p role="status" className="text-xs text-muted-foreground">Preparing a full-file download… <button className="underline" onClick={()=>onCancel?.(download.id)}>Cancel</button></p>}
+            {status==="requested"&&<p role="status" className="text-xs text-muted-foreground">Sent to your browser’s downloads. The browser handles progress, pause, and saving to storage.</p>}
+            {status==="processing"&&<p role="status" className="text-xs text-muted-foreground">Preparing a watermarked video in the background. Use Watermarked videos to check progress and save the finished file.</p>}
+            {download.error&&<p role="alert" className="text-xs text-destructive">{download.error}</p>}
             {(status === "downloading" || status === "paused") && (
               <>
                 <Progress value={progress} className="h-2" />

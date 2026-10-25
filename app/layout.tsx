@@ -7,6 +7,7 @@ import { MusicPlayerProvider } from "@/components/music-player-provider"
 import { DownloadManagerProvider } from "@/components/download-manager-provider"
 import { PlaylistManagerProvider } from "@/components/playlist-manager-provider"
 import { AIAssistant } from "@/components/ai-assistant"
+import { VideoExports } from "@/components/video-exports"
 
 export const metadata: Metadata = {
   title: "TV Room GAGA - Movies, Series, Cinema & Entertainment",
@@ -33,6 +34,7 @@ export default function RootLayout({
               <MusicPlayerProvider>
                 {children}
                 <AIAssistant />
+                <VideoExports />
               </MusicPlayerProvider>
             </PlaylistManagerProvider>
           </DownloadManagerProvider>

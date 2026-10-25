@@ -1,14 +1,15 @@
 import { webUrl, ProviderError, BROWSER_USER_AGENT } from "./http"
 
 // Not an open URL proxy: only public provider/CDN namespaces used by the app.
-const suffixes = ["aoneroom.com", "hakunaymatata.com", "dramaboxdb.com", "omegatech.app", "mzstatic.com", "itunes.apple.com", "archive.org", "sinhalasub.lk", "image.tmdb.org", "googlevideo.com", "nayan-video-downloader.vercel.app", "savetube.vip", "vidsnap.app"]
+const suffixes = ["aoneroom.com", "hakunaymatata.com", "dramaboxdb.com", "omegatech.app", "mzstatic.com", "itunes.apple.com", "archive.org", "sinhalasub.lk", "image.tmdb.org", "googlevideo.com", "nayan-video-downloader.vercel.app", "savetube.vip", "vidsnap.app", "tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.com", "muscdn.com", "fbcdn.net", "cdninstagram.com"]
 export function allowedMediaUrl(input: string) {
   const value = webUrl(input)
   if (!value) throw new ProviderError("Invalid media URL.", 400)
   const u = new URL(value)
   // The API emits legacy HTTP links for this verified HTTPS-capable relay.
   if(u.protocol==="http:"&&u.hostname==="stream.omegatech.app")u.protocol="https:"
-  if (u.protocol !== "https:" || u.port || !suffixes.some(h => u.hostname === h || u.hostname.endsWith(`.${h}`))) throw new ProviderError("This media host cannot be relayed securely. Try another source.", 400)
+  const renderOutput=/^shotstack-api-v1-output(?:-[a-z0-9-]+)?\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/i.test(u.hostname)
+  if (u.protocol !== "https:" || u.port || (!renderOutput&&!suffixes.some(h => u.hostname === h || u.hostname.endsWith(`.${h}`)))) throw new ProviderError("This media host cannot be relayed securely. Try another source.", 400)
   return u
 }
 export async function mediaFetch(input: string, headers: Record<string, string> = {}, timeout=15000) {
