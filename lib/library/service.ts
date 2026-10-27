@@ -252,11 +252,18 @@ async function resolve(item: Locator, p: URLSearchParams): Promise<Result> {
 export async function libraryStream(token: string, p: URLSearchParams) {
   const original=unseal<Locator>(token,"item")
   const params=new URLSearchParams(p)
-  return cached(`stream:${JSON.stringify(original)}:${["season","episode","chapter","retry"].map(k=>params.get(k)||"").join(":")}`,60000,()=>loadStream(original,params))
+  return cached(`stream:${JSON.stringify(original)}:${["season","episode","chapter","retry","downloadOnly"].map(k=>params.get(k)||"").join(":")}`,60000,()=>loadStream(original,params))
+}
+function isDownloadable(source:MediaSource) {
+  return !["HLS","DASH"].includes((source.format||"").toUpperCase())&&!/\.(m3u8|mpd)(?:[?#]|$)/i.test(source.url)
 }
 async function loadStream(original:Locator,p:URLSearchParams) {
   const deadline = Date.now() + 20000
-  const item = await preferredByName(await routedItem(original))
+  const routed=await routedItem(original)
+  // Still start the preferred name lookup first, but do not block every alternate
+  // resolver behind an unresponsive search connection.
+  let preferredTimer:ReturnType<typeof setTimeout>|undefined
+  const item=await Promise.race([preferredByName(routed),new Promise<Locator>(done=>{preferredTimer=setTimeout(()=>done(routed),1200)})]).finally(()=>clearTimeout(preferredTimer))
   if (p.get("chapter")?.length && item.provider === "dramabox") {
     // The provider adapter validates public/unlocked chapters; do not search around a lock.
     const detail = await attempt(item.provider, "detail", input(item))
@@ -267,33 +274,33 @@ async function loadStream(original:Locator,p:URLSearchParams) {
   if (movie) { p.set("season", "0"); p.set("episode", "0") }
   else { p.set("season", String(Math.max(1, integer(p.get("season"))))); p.set("episode", String(Math.max(1, integer(p.get("episode"))))) }
   let data: Result | undefined
-  const tried = new Set<string>()
+  let streamOnly:Result|undefined
   const sharedId = /^(moviebox|omega-Movie[Bb]ox)/.test(item.provider) && item.id!==item.taskId
   const sameId = sharedId ? [...new Set(["omega-MovieBox-pro",item.provider,"moviebox","omega-MovieBox-pro2","omega-Moviebox_off"])] : [item.provider]
   if (Number(p.get("retry")) > 0) sameId.push(sameId.shift()!)
   let preparing:ProviderError|undefined
+  const requireFile=(result:Result)=>{
+    if(result.sources.some(isDownloadable))return result
+    streamOnly ||= result
+    throw new Error("No downloadable file")
+  }
   const fromProvider=async(provider:string)=>{
-    tried.add(provider)
-    try{return await resolve({...item,provider},p)}
+    try{return requireFile(await resolve({...item,provider},p))}
     catch(e){if(e instanceof ProviderError&&e.status===425)preparing=e;throw e}
   }
-  try {
-    data=sameId.length===1?await fromProvider(sameId[0]):
-      await preferPrimary([()=>fromProvider(sameId[0])],sameId.slice(1).map(id=>()=>fromProvider(id)),700)
-  }catch{if(preparing)throw preparing}
-  if (!data && item.provider !== "dramabox") {
+  const sameSubject=()=>sameId.length===1?fromProvider(sameId[0]):
+    preferPrimary([()=>fromProvider(sameId[0])],sameId.slice(1).map(id=>()=>fromProvider(id)),700)
+  const alternatives=async():Promise<Result>=>{
     if (sameId.includes("moviebox") && Date.now() < deadline) {
       try {
         const query = new URLSearchParams({ subjectId: item.id, detailPath: item.detailPath, se: p.get("season")!, ep: p.get("episode")! })
         const alternative = normalizeProvider(await providerJson(`https://stream.omegatech.app/info?${query}`, 4000), "stream")
         const checks = await Promise.all(alternative.sources.slice(0,6).map(async source => await usable(source) ? source : null))
         const sources = checks.filter((source): source is MediaSource => Boolean(source))
-        if (sources.length) data = { ...alternative, sources }
+        if (sources.length)return requireFile({ ...alternative, sources })
       } catch { /* Fixed, same-subject resolver failed; try verified title matches next. */ }
     }
-  }
-  if (!data && item.provider !== "dramabox") {
-    for (const candidate of await findAlternative(item, tried, deadline - 5000)) {
+    for (const candidate of await findAlternative(item, new Set(sameId), deadline - 5000)) {
       if (Date.now() > deadline) break
       try {
         const metadata = await attempt(candidate.provider, "detail", input(candidate))
@@ -301,11 +308,21 @@ async function loadStream(original:Locator,p:URLSearchParams) {
         if (!match || !sameTitle(item, match)) continue
         if (item.type !== "movie" && match.type === "movie" && !metadata.seasons.some((s: any) => Number(s.season) > 0)) continue
         if(item.type==="movie"&&/series|anime|tvshow/i.test(match.type))continue
-        data = await resolve({ ...candidate, ...match }, p)
-        break
+        return requireFile(await resolve({ ...candidate, ...match }, p))
       } catch { /* Only verified same-title/year/media-type alternatives are accepted. */ }
     }
+    throw new Error("No downloadable alternatives")
   }
+  let sourceTimer:ReturnType<typeof setTimeout>|undefined
+  try {
+    data=await Promise.race([
+      item.provider==="dramabox"?sameSubject():preferPrimary([sameSubject],[alternatives],1200),
+      new Promise<never>((_,reject)=>{sourceTimer=setTimeout(()=>reject(new Error("Source deadline")),Math.max(1,deadline-Date.now()))})
+    ])
+  }catch{
+    if(p.get("downloadOnly")!=="1"&&streamOnly)data=streamOnly
+    else if(preparing)throw preparing
+  }finally{clearTimeout(sourceTimer)}
   if (!data) throw new ProviderError("No playable or downloadable file is available after trying alternate connections. Please retry later.", 502)
   let subtitles = data.subtitles
   if (!subtitles.length && item.provider === "moviebox" && !item.mediaUrl) {
@@ -316,7 +333,7 @@ async function loadStream(original:Locator,p:URLSearchParams) {
     try {
       const title = movie ? item.title : `${item.title} S${p.get("season")!.padStart(2,"0")}E${p.get("episode")!.padStart(2,"0")}`
       const url = mediaLink(source.url, title, source.format || "MP4")
-      const isFile = !["HLS", "DASH"].includes(source.format || "") && !/\.(m3u8|mpd)(?:[?#]|$)/i.test(source.url)
+      const isFile = isDownloadable(source)
        const downloadUrl = isFile ? `${mediaLink(source.download || source.url, title, source.format || "MP4", source.download&&source.download!==source.url?[source.url]:[])}&download=1` : undefined
       const resolution=String(source.quality||source.label).match(/\b(\d{3,4})p?\b/)
       const quality=resolution ? `${resolution[1]}p` : "Auto"

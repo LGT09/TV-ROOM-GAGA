@@ -8,6 +8,7 @@ import { DownloadManagerProvider } from "@/components/download-manager-provider"
 import { PlaylistManagerProvider } from "@/components/playlist-manager-provider"
 import { AIAssistant } from "@/components/ai-assistant"
 import { VideoExports } from "@/components/video-exports"
+import { adcashBootstrap } from "@/lib/adcash"
 
 export const metadata: Metadata = {
   title: "TV Room GAGA - Movies, Series, Cinema & Entertainment",
@@ -27,6 +28,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script id="aclib" type="text/javascript" src="https://acscdn.com/script/aclib.js" async />
+        <script id="adcash-auto-tag" type="text/javascript" dangerouslySetInnerHTML={{__html:adcashBootstrap}} />
+      </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
           <DownloadManagerProvider>

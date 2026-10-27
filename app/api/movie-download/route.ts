@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     if (p.get("action") === "detail") return NextResponse.json(await libraryDetail(p.get("key") || ""))
     const detail = await libraryDetail(p.get("key") || "")
     if (detail.seasons.length && (!p.get("season") || !p.get("episode"))) throw new ProviderError("Choose a season and episode in Movies & series before downloading.", 409)
+    p.set("downloadOnly","1")
     const data = await libraryStream(detail.item.key, p)
     const files=[...data.sources].filter(s=>s.downloadUrl)
     const best = files.find(s=>s.quality===p.get("quality"))||files.sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0]

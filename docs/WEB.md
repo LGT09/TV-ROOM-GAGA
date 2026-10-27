@@ -74,6 +74,8 @@ The browser decides the destination for a download. The website cannot silently 
 
 ## Reliability
 
+Movie source resolution starts the preferred connection first, tries compatible same-subject connections after 700 milliseconds, and starts verified title/year/type alternatives after 1.2 seconds if needed. Empty results, failed media probes and stream-only playlists do not prevent another connection from finding a downloadable file. Task-preparation responses are retained if no alternate file succeeds; locked short-drama chapters never trigger title-based bypasses. If no file exists but a playable adaptive stream does, playback can still use it; download requests never mislabel that playlist as an MP4.
+
 Client requests show pending states immediately, cancel stale requests, and time out with a retry action. Lists and normalized metadata use short-lived caches. Movie files are probed before links are offered, and playback still reports media-host errors honestly. External services can be offline, geo-restricted, or return expired/denied files.
 
 The catalogue keeps up to eight recent views in browser storage for thirty minutes. A loaded app can show these during a connection outage and retries the catalogue when the network returns. This is metadata caching, not offline movie storage: uncached streams, searches and downloads require an internet connection.
@@ -97,6 +99,12 @@ Render credentials, upstream URLs and render IDs stay server-side; the browser r
 Limits: three pending jobs per browser, ten submissions/hour per running server instance, six-hour maximum source duration. In-memory deduplication/limits are **not** durable global billing protection across serverless instances or restarts. Configure account-level usage controls before opening public paid processing broadly; rendering, hosting, and transfer incur provider costs. The app remains authentication-free.
 
 Respect copyright and only access/download content you are authorized to use. Never fabricate a successful download, replace a full film with a trailer, edit a signature, or bypass a locked episode.
+
+## Advertising
+
+The root document includes the Adcash library once in its head (`https://acscdn.com/script/aclib.js`, element id `aclib`) and initializes AutoTag zone `txhkagiska` once after the library is ready. Loading is asynchronous so a blocked advertising server does not hold up the app. Client-side navigation does not duplicate the tag. Ad blockers or failed network requests can prevent ads from appearing without breaking media controls.
+
+This connects the supplied advertising zone; it does not verify account/domain approval or guarantee impressions, revenue, payment eligibility or ad availability. The publisher must configure appropriate ad categories and any required consent/privacy controls for the countries and audiences served. Advertising data practices are disclosed on `/privacy`.
 
 ## Creator
 

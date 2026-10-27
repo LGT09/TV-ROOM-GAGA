@@ -24,6 +24,70 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
 const base = (id = "moviebox") => ({ id: "1234567890123456789", title: "Example", poster: "https://pbcdn.aoneroom.com/poster.jpg", year: "2023", description: "A film.", type: "movie", detailPath: "example-slug", url: "", provider: id, genres: ["Horror"] })
 const response = (items = [], sources = []) => ({ items, sources, subtitles: [], seasons: [], episodes: [], audioTracks: [] })
 
+test("Adcash initializes the exact zone once after the library loads",()=>{
+  const vm=require("node:vm")
+  const {adcashBootstrap}=sandbox()("lib/adcash.ts")
+  const listeners={},calls=[]
+  const window={addEventListener:(event,callback)=>{listeners["window:"+event]=callback}}
+  const document={getElementById:id=>{assert.equal(id,"aclib");return {addEventListener:(event,callback)=>{listeners[event]=callback}}}}
+  const context=vm.createContext({window,document})
+  vm.runInContext(adcashBootstrap,context)
+  assert.equal(calls.length,0)
+  window.aclib={runAutoTag:options=>calls.push(options.zoneId)}
+  listeners.load()
+  listeners["window:load"]()
+  vm.runInContext(adcashBootstrap,context)
+  assert.deepEqual(calls,["txhkagiska"])
+})
+test("Adcash errors or a blocked library do not throw into the application",()=>{
+  const vm=require("node:vm")
+  const {adcashBootstrap}=sandbox()("lib/adcash.ts")
+  for(const aclib of [undefined,{runAutoTag:()=>{throw new Error("Blocked")}}]){
+    assert.doesNotThrow(()=>vm.runInNewContext(adcashBootstrap,{window:{aclib,addEventListener:()=>{}},document:{getElementById:()=>null}}))
+  }
+})
+test("a slow default movie resolver is hedged by a same-subject file connection",async()=>{
+  const calls=[]
+  const load=sandbox({[path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>{
+    calls.push({id,action})
+    if(action==="search")return response([base("omega-MovieBox-pro")])
+    if(id==="omega-MovieBox-pro")await new Promise(done=>setTimeout(done,2000))
+    if(id!=="moviebox")throw new Error("Unavailable")
+    return response([],[{url:"https://cdn.hakunaymatata.com/alternate.mp4",quality:"720p",label:"720p",format:"MP4"}])
+  }}})
+  const service=load("lib/library/service.ts")
+  const start=Date.now()
+  const data=await service.libraryStream(service.publicItem(base("omega-MovieBox-pro")).key,new URLSearchParams({downloadOnly:"1"}))
+  assert.ok(Date.now()-start<1800,"The working alternate should win before the two-second default")
+  assert.ok(data.sources[0].downloadUrl)
+  assert.ok(calls.some(call=>call.id==="moviebox"&&call.action==="stream"))
+})
+test("stream-only primary results do not block a downloadable alternate",async()=>{
+  const load=sandbox({[path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>{
+    if(action==="search")return response([base("omega-MovieBox-pro")])
+    return response([],[{url:`https://cdn.hakunaymatata.com/${id==="omega-MovieBox-pro"?"movie.m3u8":"movie.mp4"}`,quality:"720p",label:"720p",format:id==="omega-MovieBox-pro"?"HLS":"MP4"}])
+  }}})
+  const service=load("lib/library/service.ts")
+  const data=await service.libraryStream(service.publicItem(base("omega-MovieBox-pro")).key,new URLSearchParams({downloadOnly:"1"}))
+  assert.ok(data.sources.every(source=>source.format==="MP4"&&source.downloadUrl))
+})
+test("a pending task can fall back to a verified same-title file instead of immediately returning 425",async()=>{
+  const original=sandbox()("lib/providers/http.ts")
+  const load=sandbox({
+    [path.resolve("lib/providers/http.ts")]:{...original,providerJson:async()=>({})},
+    [path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>{
+      if(id==="omega-MovieBox-pro"&&action==="search")return response([{...base(id),id:"task-1",taskId:"task-1"}])
+      if(id==="omega-MovieBox-pro")throw new original.ProviderError("Preparing",425)
+      if(id!=="moviebox")throw new Error("Unavailable")
+      if(action==="search"||action==="detail")return response([base("moviebox")])
+      return response([],[{url:"https://cdn.hakunaymatata.com/ready.mp4",quality:"720p",label:"720p",format:"MP4"}])
+    }}
+  })
+  const service=load("lib/library/service.ts")
+  const data=await service.libraryStream(service.publicItem({...base("omega-MovieBox-pro"),id:"task-1",taskId:"task-1"}).key,new URLSearchParams({downloadOnly:"1"}))
+  assert.ok(data.sources[0].downloadUrl)
+})
+
 test("song trending, discovery and searches use Nayan without substituting chart previews", async()=>{
   const calls=[]
   const load=sandbox({},async input=>{
