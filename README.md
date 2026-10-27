@@ -258,4 +258,4 @@ This project is for educational and personal use. Please respect copyright laws 
 
 **Enjoy your entertainment! 🎬🎵📺🎮**
 
-© 2025 TV Room. All rights reserved.
+© 2026 TV Room. All rights reserved.
