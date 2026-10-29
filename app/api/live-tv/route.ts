@@ -3,13 +3,28 @@ import { getChannels } from "@/lib/providers/iptv"
 import { integer } from "@/lib/providers/http"
 import { countryInfo } from "@/lib/countries"
 import { seal } from "@/lib/library/tokens"
+import { checkChannel } from "@/lib/providers/channel-health"
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 30
+let healthBatches=0
 export async function GET(request: Request) {
   const p = new URL(request.url).searchParams
   const action = p.get("action") || p.get("path") || "channels"
   try {
     const { channels, source, warnings } = await getChannels()
+    if(action==="ping"){
+      const ids=[...new Set((p.get("ids")||p.get("channelId")||"").split(",").filter(Boolean))]
+      if(!ids.length||ids.length>6)return NextResponse.json({success:false,error:"Check between one and six catalogue channels at a time."},{status:400})
+      if(healthBatches>=2)return NextResponse.json({success:false,error:"Channel checks are busy. Please retry shortly."},{status:429,headers:{"Retry-After":"3"}})
+      const selected=ids.map(id=>channels.find(channel=>channel.id===id))
+      if(selected.some(channel=>!channel))return NextResponse.json({success:false,error:"Channel not found."},{status:404})
+      healthBatches++
+      try{
+        const results=await Promise.all(selected.map(channel=>checkChannel(channel!)))
+        return NextResponse.json({success:true,results,note:"A responding stream is not a guarantee of playback in your region."},{headers:{"Cache-Control":"private, no-store"}})
+      }finally{healthBatches--}
+    }
     const categories = [...new Set(channels.flatMap(c => c.categories))].sort()
     const countries = [...new Set(channels.map(c => c.country))].sort()
     const q = (p.get("q") || p.get("query") || "").trim().toLowerCase()

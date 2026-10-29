@@ -100,6 +100,12 @@ Limits: three pending jobs per browser, ten submissions/hour per running server 
 
 Respect copyright and only access/download content you are authorized to use. Never fabricate a successful download, replace a full film with a trailer, edit a signature, or bypass a locked episode.
 
+## Movie resource fallback and channel checks
+
+Resource fallback searches all registered compatible film/series APIs, including APIs that supply files in their detail responses. Six search/identity-check/resolve pipelines run at a time; an empty or broken first match no longer stops later providers. The same-subject relay runs independently rather than delaying title searches. Title, release year (when known), and film/series identity must match. Metadata-only, cinema listings, news and quote APIs are not full-film download sources. Working original download URLs are tested when a playback gateway fails. Connections still have a bounded overall deadline; external rate limits, locked episodes and unavailable files cannot be bypassed.
+
+On Live TV, **Check channels** checks the current page, displays progress and response times, and supports stopping. **Active only** displays channels with recent successful checks. The server accepts catalogue IDs only, tests up to two listed streams for nonempty media/playlist data, caches checks for one minute, and limits batches to six channels. Requests reuse public-IP validation, DNS pinning and redirect checks. “Active” means the server received a media response, not guaranteed decoding, uninterrupted broadcast, or regional availability on the viewer's device. Unchecked entries are not labelled live.
+
 ## Advertising
 
 The root document includes the Adcash library once in its head (`https://acscdn.com/script/aclib.js`, element id `aclib`) and initializes AutoTag zone `txhkagiska` once after the library is ready. Loading is asynchronous so a blocked advertising server does not hold up the app. Client-side navigation does not duplicate the tag. Ad blockers or failed network requests can prevent ads from appearing without breaking media controls.

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { countryInfo } from "@/lib/countries"
 
 type Channel = { id:string; name:string; category?:string; categories?:string[]; country?:string; logo?:string; streamUrl?:string; streams?:{url:string;quality?:string}[]; hasStream?:boolean }
+type Health={id:string;active:boolean;latencyMs:number;checkedAt:number}
 export function LiveTvCatalogue() {
   const [channels,setChannels]=useState<Channel[]>([])
   const [categories,setCategories]=useState<string[]>([])
@@ -28,7 +29,33 @@ export function LiveTvCatalogue() {
   const listRequest=useRef<AbortController|null>(null)
   const channelRequest=useRef<AbortController|null>(null)
   const [selecting,setSelecting]=useState(false)
+  const [health,setHealth]=useState<Record<string,Health>>({})
+  const [checking,setChecking]=useState(false)
+  const [activeOnly,setActiveOnly]=useState(false)
+  const [checked,setChecked]=useState(0)
+  const healthRequest=useRef<AbortController|null>(null)
+  const checkChannels=async()=>{
+    const controller=new AbortController()
+    healthRequest.current?.abort();healthRequest.current=controller
+    setChecking(true);setChecked(0);setError("")
+    let next=0
+    const worker=async()=>{
+      while(next<channels.length&&!controller.signal.aborted){
+        const batch=channels.slice(next,next+6);next+=6
+        const response=await fetch(`/api/live-tv?action=ping&ids=${encodeURIComponent(batch.map(c=>c.id).join(","))}`,{signal:controller.signal,cache:"no-store"})
+        const data=await response.json()
+        if(!response.ok)throw new Error(data.error||"Could not check channels.")
+        if(controller.signal.aborted)return
+        setHealth(previous=>({...previous,...Object.fromEntries(data.results.map((result:Health)=>[result.id,result]))}))
+        setChecked(previous=>previous+batch.length)
+      }
+    }
+    try{await Promise.all([worker(),worker()])}
+    catch(e){if(!controller.signal.aborted){setError(e instanceof Error?e.message:"Channel checks failed.");controller.abort()}}
+    finally{if(healthRequest.current===controller)setChecking(false)}
+  }
   const load=useCallback(async(nextOffset=0)=>{
+    healthRequest.current?.abort();setChecking(false);setChecked(0)
     listRequest.current?.abort()
     const controller=new AbortController()
     listRequest.current=controller
@@ -44,7 +71,7 @@ export function LiveTvCatalogue() {
     finally{if(!controller.signal.aborted)setLoading(false)}
   },[submittedQuery,category,country])
   useEffect(()=>{load(0);return()=>listRequest.current?.abort()},[load])
-  useEffect(()=>()=>channelRequest.current?.abort(),[])
+  useEffect(()=>()=>{channelRequest.current?.abort();healthRequest.current?.abort()},[])
   const selectChannel=async(channel:Channel)=>{
     channelRequest.current?.abort()
     const controller=new AbortController()
@@ -61,6 +88,7 @@ export function LiveTvCatalogue() {
     finally{if(!controller.signal.aborted)setSelecting(false)}
   }
   const categoryOptions=["",...categories]
+  const visibleChannels=activeOnly?channels.filter(channel=>health[channel.id]?.active&&Date.now()-health[channel.id].checkedAt<120000):channels
   return <AppLayout><main className="page-shell space-y-5">
     <header className="flex flex-col md:flex-row md:items-end justify-between gap-5">
       <div><p className="text-xs uppercase tracking-[.2em] text-primary font-bold">Public broadcast</p><h1 className="font-display text-3xl sm:text-4xl mt-2">Live television</h1><p className="text-muted-foreground mt-2 max-w-xl text-sm">Choose a country, find a channel, and watch. Availability varies by channel and region.</p></div>
@@ -91,11 +119,17 @@ export function LiveTvCatalogue() {
           <label className="text-xs text-muted-foreground">Category<select value={category} onChange={e=>setCategory(e.target.value)} className="mt-1 w-full h-10 rounded-lg border border-border bg-card px-2 text-foreground"><option value="">All categories</option>{categoryOptions.filter(Boolean).map(c=><option key={c} value={c}>{c}</option>)}</select></label>
           <label className="text-xs text-muted-foreground"><Globe2 className="inline h-3.5 w-3.5 mr-1"/>Country<select aria-label="Country" value={country} onChange={e=>setCountry(e.target.value)} className="mt-1 w-full h-10 rounded-lg border border-border bg-card px-2 text-foreground"><option value="">All countries</option>{[...countries].sort((a,b)=>countryInfo(a).name.localeCompare(countryInfo(b).name)).map(c=><option key={c} value={c}>{countryInfo(c).flag} {countryInfo(c).name}</option>)}</select></label>
         </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" variant="outline" disabled={loading||!channels.length} onClick={()=>checking?(healthRequest.current?.abort(),setChecking(false)):checkChannels()}>{checking?"Stop checking":"Check channels"}</Button>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={activeOnly} onChange={e=>setActiveOnly(e.target.checked)}/>Active only</label>
+          <span role="status" aria-live="polite" className="text-xs text-muted-foreground">{checking?`Checking ${checked}/${channels.length}…`:`${channels.filter(c=>health[c.id]?.active&&Date.now()-health[c.id].checkedAt<120000).length} responding on this page`}</span>
+        </div>
+        <p className="text-xs text-muted-foreground">Checks test stream responses, not guaranteed playback. Regional restrictions may differ.</p>
         <div className="max-h-[min(68vh,690px)] overflow-y-auto space-y-2 pr-1">
-          {loading?Array.from({length:7},(_,i)=><div key={i} className="skeleton h-[66px] rounded-xl"/>):channels.length===0?<div className="py-12 text-center"><Tv className="h-8 w-8 mx-auto text-muted-foreground"/><p className="font-display text-xl mt-3">No channels found</p><p className="text-sm text-muted-foreground mt-1">Adjust the filters or try a different search.</p></div>:channels.map(ch=><button key={ch.id} onClick={()=>selectChannel(ch)} className={`w-full flex items-center gap-3 p-3 rounded-xl text-left border transition-colors ${selected?.id===ch.id?"border-primary/50 bg-primary/10":"border-transparent bg-card/45 hover:bg-card/90"}`}>
+          {loading?Array.from({length:7},(_,i)=><div key={i} className="skeleton h-[66px] rounded-xl"/>):visibleChannels.length===0?<div className="py-12 text-center"><Tv className="h-8 w-8 mx-auto text-muted-foreground"/><p className="font-display text-xl mt-3">{activeOnly?"No active channels checked yet":"No channels found"}</p><p className="text-sm text-muted-foreground mt-1">{activeOnly?"Check channels or turn off Active only.":"Adjust the filters or try a different search."}</p></div>:visibleChannels.map(ch=><button key={ch.id} onClick={()=>selectChannel(ch)} className={`w-full flex items-center gap-3 p-3 rounded-xl text-left border transition-colors ${selected?.id===ch.id?"border-primary/50 bg-primary/10":"border-transparent bg-card/45 hover:bg-card/90"}`}>
             {ch.logo?<img src={ch.logo} alt="" loading="lazy" className="w-12 h-9 object-contain rounded-md bg-white/80 p-1" onError={e=>{e.currentTarget.style.visibility="hidden"}}/>:<span className="w-12 h-9 grid place-items-center rounded-md bg-muted"><Tv className="h-4 w-4"/></span>}
             <span className="min-w-0 flex-1"><span className="block font-medium text-sm truncate">{ch.name}</span><span className="block text-xs text-muted-foreground truncate">{ch.category} · {countryInfo(ch.country||"").flag} {countryInfo(ch.country||"").name}</span></span>
-            <span className={`h-2 w-2 rounded-full shrink-0 ${ch.hasStream?"bg-accent":"bg-muted-foreground/40"}`} title={ch.hasStream?"Catalogue reports a stream URL":"No stream URL reported"}/>
+            <span className="text-[11px] shrink-0 text-muted-foreground">{health[ch.id]&&Date.now()-health[ch.id].checkedAt<120000?(health[ch.id].active?`Active · ${health[ch.id].latencyMs} ms`:"Unavailable"):"Unchecked"}</span>
           </button>)}
         </div>
         <div className="flex justify-between text-xs text-muted-foreground"><span>Entries {Math.min(offset+1,total)}–{Math.min(offset+channels.length,total)} of {total}</span><div className="flex gap-1"><Button size="sm" variant="outline" disabled={offset<=0||loading} onClick={()=>load(Math.max(offset-100,0))}>Previous</Button><Button size="sm" variant="outline" disabled={loading||offset+channels.length>=total} onClick={()=>load(offset+100)}>Next</Button></div></div>

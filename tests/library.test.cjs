@@ -24,6 +24,71 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
 const base = (id = "moviebox") => ({ id: "1234567890123456789", title: "Example", poster: "https://pbcdn.aoneroom.com/poster.jpg", year: "2023", description: "A film.", type: "movie", detailPath: "example-slug", url: "", provider: id, genres: ["Horror"] })
 const response = (items = [], sources = []) => ({ items, sources, subtitles: [], seasons: [], episodes: [], audioTracks: [] })
 
+test("resource race continues after broken matches with bounded concurrency",async()=>{
+  const {resourceRace}=sandbox()("lib/providers/resource-race.ts")
+  let active=0,max=0
+  const value=await resourceRace(Array.from({length:20},(_,i)=>i),async i=>{
+    active++;max=Math.max(max,active)
+    await new Promise(done=>setTimeout(done,2))
+    active--
+    if(i!==19)throw new Error("No file")
+    return i
+  },4)
+  assert.equal(value,19);assert.equal(max,4)
+})
+test("movie fallback reaches later detail-only APIs after earlier exact matches have no file",async()=>{
+  const calls=[]
+  const load=sandbox({
+    [path.resolve("lib/providers/http.ts")]:{...sandbox()("lib/providers/http.ts"),providerJson:async()=>({})},
+    [path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>{
+      calls.push(`${id}:${action}`)
+      if(action==="search"||action==="detail")return response([base(id)])
+      if(id==="omega-movie")return response([],[{url:"https://cdn.hakunaymatata.com/full.mp4",quality:"720p",label:"720p",format:"MP4"}])
+      throw new Error("No file")
+    }},
+  })
+  const service=load("lib/library/service.ts")
+  const data=await service.libraryStream(service.publicItem(base()).key,new URLSearchParams({downloadOnly:"1"}))
+  assert.ok(data.sources[0].downloadUrl)
+  assert.ok(calls.includes("omega-movie:stream"))
+})
+test("a working download URL survives a broken playback gateway",async()=>{
+  const load=sandbox({
+    [path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>action==="search"?response([base(id)]):response([],[{url:"https://cdn.hakunaymatata.com/broken.mp4",download:"https://cdn.hakunaymatata.com/original.mp4",format:"MP4",quality:"720p",label:"720p"}])},
+  },async url=>String(url).includes("broken")?new Response("Unavailable",{status:503}):new Response("bytes",{headers:{"Content-Type":"video/mp4"}}))
+  const service=load("lib/library/service.ts")
+  const result=await service.libraryStream(service.publicItem(base()).key,new URLSearchParams({downloadOnly:"1"}))
+  assert.ok(result.sources[0].downloadUrl)
+})
+test("channel health checks verify bytes, reject HTML, and deduplicate cached probes",async()=>{
+  let calls=0
+  const load=sandbox({
+    [path.resolve("lib/providers/public-stream.ts")]:{publicStreamFetch:async url=>{
+      calls++
+      return {response:new Response(url.includes("offline")?"<html>Offline</html>":"#EXTM3U\n",{headers:{"Content-Type":url.includes("offline")?"text/html":"application/vnd.apple.mpegurl"}}),url}
+    }},
+  })
+  const {checkChannel}=load("lib/providers/channel-health.ts")
+  const good={id:"good",streams:[{url:"https://example.test/live.m3u8"}]}
+  const [a,b]=await Promise.all([checkChannel(good),checkChannel(good)])
+  assert.equal(a.active,true);assert.deepEqual(a,b);assert.equal(calls,1)
+  await checkChannel(good);assert.equal(calls,1)
+  assert.equal((await checkChannel({id:"offline",streams:[{url:"https://example.test/offline"}]})).active,false)
+  assert.equal((await checkChannel({id:"empty",streams:[]})).active,false)
+})
+test("channel ping rejects arbitrary URLs, unknown IDs and oversized batches",async()=>{
+  const load=sandbox({
+    [path.resolve("lib/providers/iptv.ts")]:{getChannels:async()=>({channels:[{id:"public",streams:[{url:"https://example.test/live"}]}],warnings:[],source:"fixture"})},
+    [path.resolve("lib/providers/channel-health.ts")]:{checkChannel:async channel=>({id:channel.id,active:true,latencyMs:10,checkedAt:1})},
+  })
+  const {GET}=load("app/api/live-tv/route.ts")
+  for(const [ids,status] of [["https://127.0.0.1/",404],["a,b,c,d,e,f,g",400],["",400]]){
+    assert.equal((await GET(new Request(`https://app.test/api/live-tv?action=ping&ids=${encodeURIComponent(ids)}`))).status,status)
+  }
+  const result=await GET(new Request("https://app.test/api/live-tv?action=ping&ids=public"))
+  assert.equal(result.status,200);assert.equal((await result.json()).results[0].active,true)
+})
+
 test("Adcash initializes the exact zone once after the library loads",()=>{
   const vm=require("node:vm")
   const {adcashBootstrap}=sandbox()("lib/adcash.ts")

@@ -8,6 +8,7 @@ import { normalizeProvider } from "../providers/normalize"
 import { categories, inCategory, sameTitle } from "./categories"
 import { seal, unseal } from "./tokens"
 import { preferPrimary } from "../providers/fallback"
+import { resourceRace } from "../providers/resource-race"
 
 type Result = { items: MediaItem[]; sources: MediaSource[]; subtitles: {url:string;language:string;label:string}[]; episodes: any[]; seasons: any[]; audioTracks: any[] }
 type Locator = MediaItem
@@ -15,7 +16,8 @@ const cache = new Map<string, { expires: number; value: any }>()
 const pending = new Map<string, Promise<any>>()
 const unavailable = new Map<string, number>()
 const searches = [...new Set(["omega-MovieBox-pro", "moviebox", "omega-Free-drama",
-  ...providers.filter(p => p.actions.includes("search") && p.actions.some(a => ["stream", "resolve", "download", "play", "sources", "movie", "episode"].includes(a))).map(p => p.id)])]
+  ...providers.filter(p => p.actions.includes("search") && (p.actions.some(a => ["stream", "resolve", "download", "play", "sources", "movie", "episode", "player"].includes(a)) ||
+    ["omega-movie", "omega-Movieku", "omega-Layarcha", "omega-sinhalasub", "omega-veloflix"].includes(p.id))).map(p => p.id)])]
 const browses = ["omega-MovieBox-pro", "moviebox", "omega-Moviebox_off", "omega-veloflix", "omega-Winbu", "dramabox"]
 
 async function cached<T>(key: string, ttl: number, work: () => Promise<T>): Promise<T> {
@@ -244,7 +246,12 @@ async function resolve(item: Locator, p: URLSearchParams): Promise<Result> {
   }
   const data = await attempt(item.provider, "stream", parameters)
   if (!data.sources.length) throw new Error("No sources")
-  const verified = await Promise.all(data.sources.slice(0, 6).map(async source => await usable(source) ? source : null))
+  const verified = await Promise.all(data.sources.slice(0, 6).map(async source => {
+    if(await usable(source))return source
+    // Some APIs return a broken gateway for playback but a working original file.
+    if(source.download && source.download!==source.url && await usable({...source,url:source.download}))return {...source,url:source.download}
+    return null
+  }))
   const sources = verified.filter((s): s is MediaSource => Boolean(s))
   if (!sources.length) throw new Error("Media unavailable")
   return { ...data, sources }
@@ -291,27 +298,38 @@ async function loadStream(original:Locator,p:URLSearchParams) {
   const sameSubject=()=>sameId.length===1?fromProvider(sameId[0]):
     preferPrimary([()=>fromProvider(sameId[0])],sameId.slice(1).map(id=>()=>fromProvider(id)),700)
   const alternatives=async():Promise<Result>=>{
-    if (sameId.includes("moviebox") && Date.now() < deadline) {
-      try {
+    const relay=async():Promise<Result>=>{
+      if (!sameId.includes("moviebox"))throw new Error("Incompatible subject ID")
         const query = new URLSearchParams({ subjectId: item.id, detailPath: item.detailPath, se: p.get("season")!, ep: p.get("episode")! })
         const alternative = normalizeProvider(await providerJson(`https://stream.omegatech.app/info?${query}`, 4000), "stream")
         const checks = await Promise.all(alternative.sources.slice(0,6).map(async source => await usable(source) ? source : null))
         const sources = checks.filter((source): source is MediaSource => Boolean(source))
         if (sources.length)return requireFile({ ...alternative, sources })
-      } catch { /* Fixed, same-subject resolver failed; try verified title matches next. */ }
+        throw new Error("No relay files")
     }
-    for (const candidate of await findAlternative(item, new Set(sameId), deadline - 5000)) {
-      if (Date.now() > deadline) break
-      try {
+    const searchAndResolve=async(provider:string):Promise<Result>=>{
+      if(Date.now()>deadline-1000)throw new Error("Resource deadline")
+      const results=await attempt(provider,"search",new URLSearchParams({q:item.title,page:"1"}))
+      return resourceRace(results.items.filter(candidate=>sameTitle(item,candidate)).slice(0,3),async candidate=>{
+        try{
         const metadata = await attempt(candidate.provider, "detail", input(candidate))
         const match = metadata.items.find(m => m.id === candidate.id) || metadata.items[0]
-        if (!match || !sameTitle(item, match)) continue
-        if (item.type !== "movie" && match.type === "movie" && !metadata.seasons.some((s: any) => Number(s.season) > 0)) continue
-        if(item.type==="movie"&&/series|anime|tvshow/i.test(match.type))continue
+        if (!match || !sameTitle(item, match))throw new Error("Title mismatch")
+        if(item.year && !match.year && !candidate.year)throw new Error("Unverified release year")
+        if (item.type !== "movie" && match.type === "movie" && !metadata.seasons.some((s: any) => Number(s.season) > 0))throw new Error("Media type mismatch")
+        if(item.type==="movie"&&/series|anime|tvshow/i.test(match.type))throw new Error("Media type mismatch")
+        if(metadata.sources.length){
+          const checks=await Promise.all(metadata.sources.slice(0,6).map(async source=>await usable(source)?source:null))
+          const sources=checks.filter((s):s is MediaSource=>Boolean(s))
+          if(sources.length)return requireFile({...metadata,sources})
+        }
         return requireFile(await resolve({ ...candidate, ...match }, p))
-      } catch { /* Only verified same-title/year/media-type alternatives are accepted. */ }
+        }catch(e){if(e instanceof ProviderError&&e.status===425)preparing=e;throw e}
+      },2)
     }
-    throw new Error("No downloadable alternatives")
+    // Each pipeline searches, verifies identity, then resolves immediately. A
+    // broken first match or slow relay cannot block all the remaining APIs.
+    return Promise.any([relay(),resourceRace(searches.filter(id=>!sameId.includes(id)),searchAndResolve)])
   }
   let sourceTimer:ReturnType<typeof setTimeout>|undefined
   try {

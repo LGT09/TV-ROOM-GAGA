@@ -18,7 +18,7 @@ export function publicStreamUrl(input:string){
   return url
 }
 /** Pin the checked public IP into TLS lookup, including after every redirect. */
-export async function publicStreamFetch(input:string,headers:Record<string,string>={}):Promise<{response:Response;url:string}>{
+export async function publicStreamFetch(input:string,headers:Record<string,string>={},timeout=15000):Promise<{response:Response;url:string}>{
   let url=publicStreamUrl(input)
   for(let redirects=0;redirects<5;redirects++){
     const hostname=url.hostname.replace(/^\[|\]$/g,"")
@@ -30,13 +30,15 @@ export async function publicStreamFetch(input:string,headers:Record<string,strin
         headers:{"User-Agent":BROWSER_USER_AGENT,"Accept-Encoding":"identity",...headers},
         lookup:((_host:string,options:any,callback:any)=>options?.all?callback(null,[address]):callback(null,address.address,address.family)) as any,
       },incoming=>{
+        clearTimeout(connectionTimer)
         const h=new Headers()
         for(const [key,value]of Object.entries(incoming.headers))if(value)h.set(key,Array.isArray(value)?value.join(", "):String(value))
         const status=incoming.statusCode||502
         resolve(new Response([204,304].includes(status)?null:Readable.toWeb(incoming) as ReadableStream,{status,headers:h}))
       })
+      const connectionTimer=setTimeout(()=>upstream.destroy(new Error("Stream connection timed out")),timeout)
       upstream.setTimeout(15000,()=>upstream.destroy(new Error("Stream connection timed out")))
-      upstream.on("error",reject)
+      upstream.on("error",error=>{clearTimeout(connectionTimer);reject(error)})
       upstream.end()
     })
     if(response.status>=300&&response.status<400){

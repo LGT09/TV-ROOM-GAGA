@@ -124,6 +124,7 @@ function nativeAction(provider: ProviderDefinition, action: string) {
     if (route === "MovieBox-pro") return "download"
     if (["Moviebox_off", "Live-Tv"].includes(route!)) return "play"
     if (provider.actions.includes("resolve")) return "resolve"
+    if (route === "CineSubz" || ["movie", "Movieku", "Layarcha", "sinhalasub", "veloflix"].includes(route!)) return "detail"
   }
   throw new ProviderError("This provider does not support that action.", 400)
 }
