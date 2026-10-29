@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { AlertCircle, ArrowUpRight, Disc3, Download, LoaderCircle, Music2, Pause, Play, RotateCcw, Search } from "lucide-react"
-import { saveMediaFile } from "@/lib/client-download"
+import { SongDownload } from "@/components/song-download"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -170,30 +170,8 @@ export function HomeMusic() {
     }
   }
 
-  const downloadTrack = async (track: Track) => {
-    const key = trackKey(track)
-    const source = track.previewUrl || (track.videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(track.videoId)}` : "")
-    if (!source) {
-      setActionError({ key, message: "A full-song download isn’t available for this song." })
-      return
-    }
-    const controller = new AbortController()
-    actionControllers.current.add(controller)
-    setPendingDownload(key)
-    setActionError(null)
-    try {
-      const params = new URLSearchParams({ action: "download-mp3", url: source, title: `${track.trackName} ${track.artistName}` })
-      const data = await requestJson<MusicResponse>(`/api/music?${params}`, controller)
-      if (controller.signal.aborted) return
-      if (!data.success || !data.downloadUrl) throw new Error(data.error || "A full-song download isn’t available for this song.")
-      await saveMediaFile(data.downloadUrl,undefined,controller.signal)
-    } catch (reason) {
-      if (!controller.signal.aborted) setActionError({ key, message: reason instanceof Error ? reason.message : "Download couldn’t start. Please try again." })
-    } finally {
-      actionControllers.current.delete(controller)
-      setPendingDownload(current => current === key ? null : current)
-    }
-  }
+  const [downloadSong,setDownloadSong]=useState<Track|null>(null)
+  const downloadTrack = async (track: Track) => {setDownloadSong(track)}
 
   const searching = query.trim().length > 0
 
@@ -333,6 +311,7 @@ export function HomeMusic() {
           }} />
         </div>
       </div>
+      {downloadSong&&<SongDownload song={downloadSong} onClose={()=>setDownloadSong(null)}/>}
     </section>
   )
 }

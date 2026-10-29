@@ -2,13 +2,14 @@ import "server-only"
 import { runProvider } from "../providers/service"
 import { providers } from "../providers/registry"
 import { providerJson, ProviderError, integer } from "../providers/http"
-import { allowedMediaUrl, mediaFetch } from "../providers/media-url"
+import { allowedMediaUrl } from "../providers/media-url"
 import type { MediaItem, MediaSource } from "../providers/normalize"
 import { normalizeProvider } from "../providers/normalize"
 import { categories, inCategory, sameTitle } from "./categories"
 import { seal, unseal } from "./tokens"
 import { preferPrimary } from "../providers/fallback"
 import { resourceRace } from "../providers/resource-race"
+import { probeMedia } from "../providers/media-probe"
 
 type Result = { items: MediaItem[]; sources: MediaSource[]; subtitles: {url:string;language:string;label:string}[]; episodes: any[]; seasons: any[]; audioTracks: any[] }
 type Locator = MediaItem
@@ -170,7 +171,7 @@ function preferredByName(item:Locator):Promise<Locator>{
   return cached(`preferred:${[item.provider,item.id,item.year,item.type,item.taskId].join(":")}`,300000,()=>lookupPreferred(item))
 }
 async function lookupPreferred(item:Locator):Promise<Locator>{
-  if(item.provider==="dramabox")return item
+  if(item.provider==="dramabox"||item.provider==="omega-MovieBox-pro")return item
   try {
     const result=await attempt("omega-MovieBox-pro","search",new URLSearchParams({q:item.title,page:"1"}))
     const candidates=result.items.filter(candidate=>sameTitle(item,candidate)&&!(item.type==="movie"&&/series|anime|tvshow/i.test(candidate.type)))
@@ -231,10 +232,9 @@ function mediaLink(url: string, title: string, format: string, fallbacks: string
 async function usable(source: MediaSource) {
   try {
     const url = allowedMediaUrl(source.url)
-    const response = await mediaFetch(url.href,{Range:"bytes=0-0"},4000)
-    const ok = response.ok && /^(video\/|audio\/(?:x-)?mpegurl|application\/(octet-stream|vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i.test(response.headers.get("content-type") || "")
-    await response.body?.cancel()
-    return ok
+    const result=await probeMedia(url.href)
+    source.sizeBytes=result.sizeBytes
+    return true
   } catch { return false }
 }
 async function resolve(item: Locator, p: URLSearchParams): Promise<Result> {
@@ -287,6 +287,7 @@ async function loadStream(original:Locator,p:URLSearchParams) {
   if (Number(p.get("retry")) > 0) sameId.push(sameId.shift()!)
   let preparing:ProviderError|undefined
   const requireFile=(result:Result)=>{
+    if(p.get("downloadOnly")!=="1"&&result.sources.length)return result
     if(result.sources.some(isDownloadable))return result
     streamOnly ||= result
     throw new Error("No downloadable file")
@@ -296,7 +297,7 @@ async function loadStream(original:Locator,p:URLSearchParams) {
     catch(e){if(e instanceof ProviderError&&e.status===425)preparing=e;throw e}
   }
   const sameSubject=()=>sameId.length===1?fromProvider(sameId[0]):
-    preferPrimary([()=>fromProvider(sameId[0])],sameId.slice(1).map(id=>()=>fromProvider(id)),700)
+    Promise.any(sameId.map(provider=>fromProvider(provider)))
   const alternatives=async():Promise<Result>=>{
     const relay=async():Promise<Result>=>{
       if (!sameId.includes("moviebox"))throw new Error("Incompatible subject ID")
@@ -313,7 +314,11 @@ async function loadStream(original:Locator,p:URLSearchParams) {
       return resourceRace(results.items.filter(candidate=>sameTitle(item,candidate)).slice(0,3),async candidate=>{
         try{
         const metadata = await attempt(candidate.provider, "detail", input(candidate))
-        const match = metadata.items.find(m => m.id === candidate.id) || metadata.items[0]
+        // Some download APIs return files with no repeated title metadata.
+        // Accept those only if the search already explicitly supplied media type
+        // and the required year; never infer identity from a filename.
+        const match = metadata.items.find(m => m.id === candidate.id) || metadata.items[0] ||
+          (metadata.sources.length&&candidate.typeKnown&&(!item.year||candidate.year)?candidate:undefined)
         if (!match || !sameTitle(item, match))throw new Error("Title mismatch")
         if(item.year && !match.year && !candidate.year)throw new Error("Unverified release year")
         if (item.type !== "movie" && match.type === "movie" && !metadata.seasons.some((s: any) => Number(s.season) > 0))throw new Error("Media type mismatch")
@@ -334,7 +339,7 @@ async function loadStream(original:Locator,p:URLSearchParams) {
   let sourceTimer:ReturnType<typeof setTimeout>|undefined
   try {
     data=await Promise.race([
-      item.provider==="dramabox"?sameSubject():preferPrimary([sameSubject],[alternatives],1200),
+      item.provider==="dramabox"?sameSubject():Promise.any([sameSubject(),alternatives()]),
       new Promise<never>((_,reject)=>{sourceTimer=setTimeout(()=>reject(new Error("Source deadline")),Math.max(1,deadline-Date.now()))})
     ])
   }catch{
@@ -355,7 +360,7 @@ async function loadStream(original:Locator,p:URLSearchParams) {
        const downloadUrl = isFile ? `${mediaLink(source.download || source.url, title, source.format || "MP4", source.download&&source.download!==source.url?[source.url]:[])}&download=1` : undefined
       const resolution=String(source.quality||source.label).match(/\b(\d{3,4})p?\b/)
       const quality=resolution ? `${resolution[1]}p` : "Auto"
-      return [{ url, downloadUrl, quality, label:quality, format: source.format }]
+      return [{ url, downloadUrl, quality, label:quality, format: source.format, sizeBytes:source.sizeBytes }]
     } catch { return [] }
   })
   return { success: true, sources: safeSources, subtitles: subtitles.flatMap(caption => {

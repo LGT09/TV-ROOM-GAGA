@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Download, LoaderCircle } from "lucide-react"
 import { saveMediaFile } from "@/lib/client-download"
+import { formatFileSize } from "@/lib/media-info"
 
 export function CheckedDownload({url,label="Download file",filename}:{url:string;label?:string;filename?:string}) {
   const [busy,setBusy]=useState(false)
@@ -17,8 +18,9 @@ export function CheckedDownload({url,label="Download file",filename}:{url:string
     const timeout=setTimeout(()=>abort.abort(),75000)
     setBusy(true);setMessage("");setError(false)
     try{
-      const result=await saveMediaFile(url,filename,abort.signal)
-      setMessage(result==="queued"?"Background processing started. Use Watermarked videos to check progress and save the finished file.":"Sent to your browser’s downloads. Your browser handles saving the file.")
+      let size:number|undefined
+      const result=await saveMediaFile(url,filename,abort.signal,info=>{size=info.sizeBytes})
+      setMessage(`${formatFileSize(size)} · ${result==="queued"?"Background processing started. Use Watermarked videos to check progress and save the finished file.":"Sent to your browser’s downloads. Your browser handles saving the file."}`)
     }catch(e){
       setError(true)
       setMessage(abort.signal.aborted?"The file took too long to respond. Refresh sources or try another quality.":e instanceof Error?e.message:"Download could not start.")

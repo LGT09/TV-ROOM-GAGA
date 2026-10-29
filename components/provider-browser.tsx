@@ -9,12 +9,13 @@ import { MediaPlayback } from "@/components/media-playback"
 import { CheckedDownload } from "@/components/checked-download"
 import { readApiJson } from "@/lib/client-json"
 import { cachedCatalogue, rememberCatalogue } from "@/lib/client-catalogue"
+import { formatFileSize } from "@/lib/media-info"
 
 type LibraryItem = { key: string; title: string; poster: string; description: string; year: string | number; type: string; rating?: number; genres?: string[] }
 type Season = { season: number; episode_count: number }
 type Episode = { id: string; title: string; season: number; episode: number; locked: boolean }
 type AudioTrack = { key: string; title: string }
-type Source = { url: string; downloadUrl?: string; quality: string; label: string; format: string }
+type Source = { url: string; downloadUrl?: string; quality: string; label: string; format: string; sizeBytes?:number }
 type Subtitle = { url: string; language: string; label: string }
 type Listing = { items: LibraryItem[]; page: number; limit: number; hasNext: boolean; categories: { id: string; label: string }[]; message?: string }
 type Detail = { item: LibraryItem; seasons: Season[]; episodes: Episode[]; audioTracks: AudioTrack[]; message?: string }
@@ -146,7 +147,7 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
   }
 
   useEffect(()=>{if(selected&&detail&&!detailLoading&&!isSeries)void playItem()},[selected?.key,detailLoading])
-  const playItem = async (audioKey?: string, nextRetry = 0, requestedEpisode?: Episode) => {
+  const playItem = async (audioKey?: string, nextRetry = 0, requestedEpisode?: Episode, downloadOnly=false) => {
     if (!selected) return
     if(!navigator.onLine){setStreamError("You’re offline. Reconnect to prepare playback and downloads.");return}
     streamController.current?.abort()
@@ -158,6 +159,7 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
     setRetry(nextRetry)
     const key = audioKey || activeKey || selected.key
     const params = new URLSearchParams({ action: "stream", key, season: isSeries ? String(requestedEpisode?.season || season) : "0", episode: isSeries ? String(requestedEpisode?.episode || episode) : "0", retry: String(nextRetry) })
+    if(downloadOnly)params.set("downloadOnly","1")
     const chapter = requestedEpisode || activeEpisode
     if (chapter?.id) params.set("chapter", chapter.id)
     try {
@@ -167,11 +169,11 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
       if(controller.signal.aborted||streamController.current!==controller)return
       if (!response.ok || data.success === false) throw new Error(data.error || data.message || "No playable source was returned.")
       const result: Stream = { sources: data.sources || [], subtitles: data.subtitles || [], message: data.message }
-      setStream(result)
+      setStream(previous=>downloadOnly&&previous?{...result,sources:[...previous.sources,...result.sources.filter(source=>!previous.sources.some(existing=>existing.url===source.url))]}:result)
       if (!result.sources.length) setStreamError(result.message || "No playable source is available for this selection.")
     } catch (cause) {
       if (streamController.current === controller) {
-        setStream(null)
+        if(!downloadOnly)setStream(null)
         setStreamError(controller.signal.aborted ? "The alternate connections took too long. Please retry." : cause instanceof Error ? cause.message : "Playback could not be prepared.")
       }
     } finally { window.clearTimeout(timeout); if (streamController.current === controller) setStreamLoading(false) }
@@ -260,7 +262,9 @@ function MovieLibrary({ compact = false, initialQuery = "" }: { compact?: boolea
       {stream?.sources?.length ? <section className="space-y-3 border-t border-border/70 pt-4">
         <h3 className="font-display text-lg">Playback</h3>
         <MediaPlayback key={`${stream.sources[0].url}-${retry}`} src={stream.sources[0].url} title={selected.title} subtitles={stream.subtitles} alternateSources={stream.sources.slice(1).map(source => ({ url: source.url, label: source.label, quality: source.quality }))} />
-        <div className="flex flex-wrap gap-2">{stream.sources.filter(source => source.downloadUrl && !/\.m3u8(?:$|\?)/i.test(source.downloadUrl || "")).map((source, index) => <CheckedDownload key={`${source.downloadUrl}-${index}`} url={source.downloadUrl!} label={`Download ${source.label||source.quality||"file"}${source.format?` · ${source.format}`:""}`}/>)}</div>
+        <p className="text-sm text-muted-foreground">Choose a download quality. Sizes are reported by the media host, not estimates.</p>
+        {!stream.sources.some(source=>source.downloadUrl)&&<Button variant="outline" disabled={streamLoading} onClick={()=>void playItem(undefined,retry,undefined,true)}>{streamLoading?"Finding download qualities…":"Find download qualities"}</Button>}
+        <div className="flex flex-wrap gap-2">{stream.sources.filter(source => source.downloadUrl && !/\.m3u8(?:$|\?)/i.test(source.downloadUrl || "")).map((source, index) => <CheckedDownload key={`${source.downloadUrl}-${index}`} url={source.downloadUrl!} label={`Download ${source.label||source.quality||"file"}${source.format?` · ${source.format}`:""} · ${formatFileSize(source.sizeBytes)}`}/>)}</div>
         {stream.message && <p className="text-xs text-muted-foreground">{stream.message}</p>}
       </section> : null}
     </div>}

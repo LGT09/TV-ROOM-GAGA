@@ -24,6 +24,94 @@ function sandbox(overrides = {}, fetcher = async () => new Response("data", { he
 const base = (id = "moviebox") => ({ id: "1234567890123456789", title: "Example", poster: "https://pbcdn.aoneroom.com/poster.jpg", year: "2023", description: "A film.", type: "movie", detailPath: "example-slug", url: "", provider: id, genres: ["Horror"] })
 const response = (items = [], sources = []) => ({ items, sources, subtitles: [], seasons: [], episodes: [], audioTracks: [] })
 
+test("file sizes use range totals rather than the one-byte probe body",()=>{
+  const {fileSize,formatFileSize}=sandbox()("lib/media-info.ts")
+  assert.equal(fileSize(new Headers({"content-range":"bytes 0-0/5242880","content-length":"1"})),5242880)
+  assert.equal(fileSize(new Headers({"content-range":"bytes 0-0/*","content-length":"1"})),undefined)
+  assert.equal(formatFileSize(5242880),"5.0 MB")
+  assert.equal(formatFileSize(undefined),"Size unavailable")
+})
+test("alternate resource envelopes preserve real file maps and download_links arrays",()=>{
+  const {normalizeProvider}=sandbox()("lib/providers/normalize.ts")
+  const result=normalizeProvider({qualities:{"720p":"https://cdn.aoneroom.com/file?id=720","1080p":"https://cdn.aoneroom.com/file?id=1080"},download_links:["https://cdn.aoneroom.com/original.mp4"]},"fixture")
+  assert.equal(result.sources.length,3)
+  assert.deepEqual(result.sources.slice(0,2).map(source=>source.quality),["720p","1080p"])
+})
+test("fast playback accepts a verified adaptive stream without waiting for download-only alternatives",async()=>{
+  const load=sandbox({[path.resolve("lib/providers/service.ts")]:{runProvider:async(id,action)=>{
+    if(action==="search")return response([base(id)])
+    if(id!=="omega-MovieBox-pro")throw new Error("Unavailable")
+    return response([],[{url:"https://cdn.aoneroom.com/stream.m3u8",quality:"Auto",label:"Auto",format:"HLS"}])
+  }}},async()=>new Response("#EXTM3U\n",{headers:{"Content-Type":"application/vnd.apple.mpegurl"}}))
+  const service=load("lib/library/service.ts"),start=Date.now()
+  const result=await service.libraryStream(service.publicItem(base("omega-MovieBox-pro")).key,new URLSearchParams())
+  assert.ok(Date.now()-start<1500)
+  assert.equal(result.sources[0].format,"HLS")
+  assert.equal(result.sources[0].downloadUrl,undefined)
+})
+test("download probes accept valid force-download MP4s and reject disguised HTML",async()=>{
+  const fixture=Buffer.from([0,0,0,24,...Buffer.from("ftypisom")])
+  const good=sandbox({},async()=>new Response(fixture,{headers:{"content-type":"application/force-download","content-range":"bytes 0-11/987654321"}}))("lib/providers/media-probe.ts")
+  assert.equal((await good.probeMedia("https://cdn.aoneroom.com/file")).sizeBytes,987654321)
+  const bad=sandbox({},async()=>new Response("<!DOCTYPE html>",{headers:{"content-type":"video/mp4"}}))("lib/providers/media-probe.ts")
+  await assert.rejects(()=>bad.probeMedia("https://cdn.aoneroom.com/file"),/Not media/)
+})
+test("song extras contain real matched lyrics, credits and artwork in a valid ZIP",async()=>{
+  let lyricRequests=0
+  const load=sandbox({},async input=>{
+    const url=new URL(String(input))
+    if(url.hostname==="i.ytimg.com")return new Response(Buffer.from([255,216,255,217]),{headers:{"content-type":"image/jpeg"}})
+    assert.equal(url.hostname,"lrclib.net");lyricRequests++
+    return Response.json({trackName:"Example Song",artistName:"Example Artist",albumName:"Test Album",duration:200,plainLyrics:"Original fixture lyric.",syncedLyrics:"[00:01.00]Original fixture lyric."})
+  })
+  const {prepareSongExtras}=load("lib/music/extras.ts")
+  const result=await prepareSongExtras({title:"Example Artist - Example Song (Official Video)",artist:"Example ArtistVEVO",url:"https://youtu.be/YQHsXMglC9A"})
+  assert.deepEqual(result.files.map(f=>f.name),["artist-and-track.json","cover.jpg","lyrics.txt","lyrics.lrc","README.txt"])
+  assert.equal(result.bytes.readUInt32LE(0),0x04034b50)
+  assert.equal(result.bytes.readUInt32LE(result.bytes.length-22),0x06054b50)
+  assert.equal(result.bytes.readUInt16LE(result.bytes.length-12),5)
+  const {spawnSync}=require("node:child_process")
+  const zip=spawnSync("python3",["-c","import sys,io,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; assert z.read('lyrics.txt').decode()=='Original fixture lyric.'; print(len(z.namelist()))"],{input:result.bytes,encoding:"utf8"})
+  assert.equal(zip.status,0,zip.stderr)
+  await prepareSongExtras({title:"Example Artist - Example Song (Official Video)",artist:"Example ArtistVEVO",url:"https://youtu.be/YQHsXMglC9A"})
+  assert.equal(lyricRequests,1)
+})
+test("unmatched lyrics are not downloaded under the wrong artist",async()=>{
+  const load=sandbox({},async input=>String(input).includes("ytimg")?new Response("",{status:404}):Response.json({trackName:"Different song",artistName:"Wrong artist",plainLyrics:"Wrong"}))
+  const data=await load("lib/music/extras.ts").prepareSongExtras({title:"Requested",artist:"Correct Artist",url:"https://youtu.be/YQHsXMglC9A"})
+  assert.ok(!data.files.some(file=>/^lyrics\./.test(file.name)))
+  assert.match(data.lyricsStatus,/Unavailable/)
+})
+test("lyrics rate limits honor Retry-After without immediate retry",async()=>{
+  let requests=0
+  const load=sandbox({},async input=>{
+    if(String(input).includes("ytimg"))return new Response("",{status:404})
+    requests++;return new Response("",{status:429,headers:{"Retry-After":"120"}})
+  })
+  const {prepareSongExtras}=load("lib/music/extras.ts")
+  for(const title of ["One","Two"])await prepareSongExtras({title,artist:"Artist",url:"https://youtu.be/YQHsXMglC9A"})
+  assert.equal(requests,1)
+})
+test("song extras routes reject arbitrary image URLs and cross-origin submissions",async()=>{
+  const load=sandbox()
+  const {POST}=load("app/api/music-extras/route.ts")
+  const badOrigin=await POST(new Request("https://app.test/api/music-extras",{method:"POST",headers:{origin:"https://bad.test"},body:"{}"}))
+  assert.equal(badOrigin.status,403)
+  const badUrl=await POST(new Request("https://app.test/api/music-extras",{method:"POST",headers:{origin:"https://app.test"},body:JSON.stringify({title:"Test",artist:"Test",url:"https://127.0.0.1/private"})}))
+  assert.equal(badUrl.status,400)
+})
+test("YouTube downloads expose verified native file choices and real sizes",async()=>{
+  const load=sandbox({},async input=>{
+    if(String(input).includes("cdn.aoneroom.com"))return new Response("audio bytes",{headers:{"content-type":"audio/mpeg","content-range":"bytes 0-10/7654321"}})
+    return Response.json({result:{title:"Full song",formats:[{type:"audio",format:"mp3",quality:"128 kbps",url:"https://cdn.aoneroom.com/128.mp3"},{type:"audio",format:"mp3",quality:"256 kbps",url:"https://cdn.aoneroom.com/256.mp3"}]}})
+  })
+  const result=await load("lib/music/youtube.ts").resolveYoutube("https://youtu.be/YQHsXMglC9A","audio")
+  assert.equal(result.choices.length,2)
+  assert.deepEqual(result.choices.map(choice=>choice.quality),["128 kbps","256 kbps"])
+  assert.ok(result.choices.every(choice=>choice.sizeBytes===7654321&&choice.downloadUrl.startsWith("/api/media?")))
+  assert.ok(!JSON.stringify(result).includes("cdn.aoneroom.com"))
+})
+
 test("resource race continues after broken matches with bounded concurrency",async()=>{
   const {resourceRace}=sandbox()("lib/providers/resource-race.ts")
   let active=0,max=0

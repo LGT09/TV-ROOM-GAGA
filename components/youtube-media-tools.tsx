@@ -7,12 +7,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MediaPlayback } from "@/components/media-playback"
 import { CheckedDownload } from "@/components/checked-download"
+import { formatFileSize } from "@/lib/media-info"
 
 type YouTubeItem = { id: string; title: string; thumbnail: string; duration: string; author: string; url: string }
 type SearchResponse = { success: boolean; items?: YouTubeItem[]; error?: string }
-type MediaResponse = { success: boolean; title?: string; downloadUrl?: string; playUrl?: string; format?: string; quality?: string; isPreview?: boolean; error?: string }
+type MediaChoice={downloadUrl:string;format:string;quality:string;sizeBytes?:number}
+type MediaResponse = { success: boolean; title?: string; downloadUrl?: string; playUrl?: string; format?: string; quality?: string; sizeBytes?:number; choices?:MediaChoice[]; isPreview?: boolean; error?: string }
 type ActivePlayback = { kind: "audio" | "video"; title: string; url: string }
-type ReadyDownload = { title: string; url: string; format: string; quality?: string }
+type ReadyDownload = { title: string; url: string; format: string; quality?: string; sizeBytes?:number; choices?:MediaChoice[] }
 
 async function readResponse<T>(response: Response): Promise<T> {
   const body = await response.text()
@@ -120,7 +122,7 @@ export function YoutubeMediaTools() {
       if (data.isPreview) throw new Error("A preview is not available for full playback. Choose another result.")
       if (isDownload) {
         if (!data.downloadUrl) throw new Error("A download link was not returned. Please retry.")
-        setDownload({ title: data.title || item.title, url: data.downloadUrl, format: `${(data.format||(isVideo?"video":"audio")).toUpperCase()} ${isVideo?"video":"audio"}`, quality: isVideo ? data.quality || "Auto" : undefined })
+        setDownload({ title: data.title || item.title, url: data.downloadUrl, format: `${(data.format||(isVideo?"video":"audio")).toUpperCase()} ${isVideo?"video":"audio"}`, quality: data.quality || "Original quality",sizeBytes:data.sizeBytes,choices:data.choices })
         setPlayback(null)
         return
       }
@@ -201,7 +203,8 @@ export function YoutubeMediaTools() {
       <MediaPlayback key={playback.url} src={playback.url} title={playback.title}/>
     </div>}
     {download && <div role="status" className="rounded-2xl border border-primary/25 bg-primary/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-      <div className="flex-1 min-w-0"><p className="font-semibold text-sm truncate">{download.title}</p><p className="text-xs text-muted-foreground mt-1">{download.format}{download.quality ? ` · ${download.quality}` : ""} · full media</p></div>
+      <div className="flex-1 min-w-0"><p className="font-semibold text-sm truncate">{download.title}</p><p className="text-xs text-muted-foreground mt-1">{download.format}{download.quality ? ` · ${download.quality}` : ""} · {formatFileSize(download.sizeBytes)} · full media</p>
+      {!!download.choices?.length&&<label className="mt-2 block text-xs">Choose available quality<select aria-label="Prepared media quality" value={download.url} onChange={e=>{const choice=download.choices?.find(choice=>choice.downloadUrl===e.target.value);if(choice)setDownload({...download,url:choice.downloadUrl,quality:choice.quality,format:choice.format,sizeBytes:choice.sizeBytes})}} className="mt-1 w-full rounded-lg border bg-background p-2">{download.choices.map(choice=><option key={choice.downloadUrl} value={choice.downloadUrl}>{choice.quality} · {choice.format} · {formatFileSize(choice.sizeBytes)}</option>)}</select></label>}</div>
        <CheckedDownload url={download.url} label="Save file"/>
     </div>}
   </section>

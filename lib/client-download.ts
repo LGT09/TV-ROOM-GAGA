@@ -1,8 +1,9 @@
 import { readApiJson } from "./client-json"
 import { queueVideoExport } from "./client-video-exports"
+import { fileSize } from "./media-info"
 
 /** Stream into the browser's download manager, not into a multi-gigabyte JavaScript Blob. */
-export async function saveMediaFile(input:string,filename?:string,signal?:AbortSignal) {
+export async function saveMediaFile(input:string,filename?:string,signal?:AbortSignal,onInfo?:(info:{sizeBytes?:number})=>void) {
   if(typeof navigator!=="undefined"&&!navigator.onLine)throw new Error("You are offline. Reconnect to download this file.")
   const url=new URL(input,window.location.origin)
   if(url.origin!==window.location.origin||url.pathname!=="/api/media")throw new Error("Prepare a secure download from the library first.")
@@ -12,6 +13,7 @@ export async function saveMediaFile(input:string,filename?:string,signal?:AbortS
     throw new Error(response.status===400?"This download link expired. Refresh the sources and try again.":"The file could not be reached. Try another quality or refresh the sources.")
   }
   if(signal?.aborted)throw new DOMException("Cancelled","AbortError")
+  onInfo?.({sizeBytes:Number(response.headers.get("X-TVRoom-File-Size"))||fileSize(response.headers)})
   if(response.headers.get("X-TVRoom-Media-Kind")==="video"&&response.headers.get("X-TVRoom-Watermark")!=="permanent"&&response.headers.get("X-TVRoom-Download-Mode")!=="original"){
     await queueVideoExport(url,filename,signal)
     return "queued" as const

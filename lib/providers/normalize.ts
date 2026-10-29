@@ -4,8 +4,9 @@ export interface MediaItem {
   id: string; title: string; poster: string; description: string; year: string
   type: string; detailPath: string; url: string; provider: string; rating?: number; genres?: string[]
   taskId?: string; taskParam?: string; mediaUrl?: string
+  typeKnown?: boolean
 }
-export interface MediaSource { url: string; quality: string; label: string; download?: string; format?: string }
+export interface MediaSource { url: string; quality: string; label: string; download?: string; format?: string; sizeBytes?:number }
 
 const str = (v: any) => typeof v === "string" || typeof v === "number" ? String(v) : ""
 const direct = (v: unknown) => typeof v === "string" && /\.(mp4|m3u8|mpd|webm|m4v|mp3|m4a)(?:[?#]|$)/i.test(v)
@@ -40,7 +41,7 @@ export function normalizeProvider(data: any, provider: string) {
         poster: typeof poster === "string" && poster.startsWith("/") ? `https://image.tmdb.org/t/p/w500${poster}` : webUrl(typeof poster === "object" ? poster?.url : poster),
         description: str(value.description || value.overview || value.synopsis || value.desc),
         year: str(value.year || value.releaseDate || value.release_date).slice(0, 4),
-        type: mediaType, genres,
+        type: mediaType, genres, typeKnown:provider==="dramabox"||value.subjectType!==undefined||value.subject_type!==undefined||!!(value.type||value.media_type)||/\/(?:movies|tvshows|episodes)\//.test(str(value.link||value.url)),
         detailPath: str(value.detailPath || value.detail_path || value.slug),
         url: webUrl(value.url || value.link), rating: Number(value.rating || value.vote_average || value.imdbRating || value.imdbRatingValue) || undefined,
       })
@@ -52,22 +53,23 @@ export function normalizeProvider(data: any, provider: string) {
   const sources: MediaSource[] = []
   const subtitles: { url: string; language: string; label: string; proxyUrl: string }[] = []
   const seenSources = new Set<string>()
+  const sourceContainer=/^(sources|qualities|videos|video|streams|dl_links|dlLinks|download_links|downloadLinks|downloads|download|files)$/
   function addSource(value: any, label = "Original", explicit = false) {
     if (typeof value === "string") value = { url: value }
     if (!value || typeof value !== "object" || value.locked === true || value.unlock === false) return
-    const url = webUrl(value.originalStreamUrl || value.streamUrl || value.stream_url || value.videoUrl || value.video_url || value.downloadUrl || value.download_url || value.direct || value.file || value.src || value.url || value.link)
+    const url = webUrl(value.originalStreamUrl || value.streamUrl || value.stream_url || value.videoUrl || value.video_url || value.downloadUrl || value.download_url || value.download_link || value.download || value.direct || value.file || value.src || value.url || value.link)
     // Never treat a title page or embedded HTML server as a playable file.
     if (!url || (!explicit && !direct(url)) || seenSources.has(url)) return
     if (/\.(srt|vtt)(?:[?#]|$)/i.test(url)) return
     seenSources.add(url)
     sources.push({ url, quality: str(value.quality || value.resolution || value.label) || label, label: str(value.label || value.quality || value.resolution) || label,
-      download: webUrl(value.downloadUrl || value.download || url), format: /\.m3u8(?:[?#]|$)/i.test(url) ? "HLS" : /\.mpd(?:[?#]|$)/i.test(url) ? "DASH" : str(value.format) || "MP4" })
+      download: webUrl(value.downloadUrl || value.download_url || value.download_link || value.download || url), format: /\.m3u8(?:[?#]|$)/i.test(url) ? "HLS" : /\.mpd(?:[?#]|$)/i.test(url) ? "DASH" : str(value.format) || "MP4" })
   }
   function sourceWalk(value: any, depth = 0, context = "") {
     if (!value || depth > 10 || sources.length > 100) return
     if (Array.isArray(value)) { value.forEach(v => sourceWalk(v, depth + 1, context)); return }
     if (typeof value !== "object") {
-      if (/^(sources|qualities|videos|streams|dl_links|downloadLinks|downloads)$/.test(context)) addSource(value, context, true)
+      if (sourceContainer.test(context)) addSource(value, context, true)
       return
     }
     if (/subtitle|caption/i.test(context)) {
@@ -75,8 +77,9 @@ export function normalizeProvider(data: any, provider: string) {
       if (url && !subtitles.some(s => s.url === url)) subtitles.push({ url, language: str(value.languageCode || value.language_code || value.lang || value.lan || value.language) || "und", label: str(value.name || value.label || value.lanName || value.language) || "Subtitles", proxyUrl: `/api/subtitle?url=${encodeURIComponent(url)}` })
       return
     }
-    if (!["items", "featured", "episodes", "chapters"].includes(context)) addSource(value, "Original", /^(sources|qualities|videos|streams|dl_links|downloadLinks|downloads)$/.test(context))
+    if (!["items", "featured", "episodes", "chapters"].includes(context)) addSource(value, "Original", sourceContainer.test(context))
     for (const [key, child] of Object.entries(value)) {
+      if(sourceContainer.test(context)&&/^\d{3,4}p?$/.test(key)&&typeof child==="string"){addSource({url:child,quality:key},key,true);continue}
       if(value.originalStreamUrl&&key==="streamUrl")continue
       if (/^(bestQualityUrl|streamUrl|stream_url|videoUrl|video_url|downloadUrl|download_url|direct_url|playUrl|play_url|m3u8|mp4|hd|sd|hd_url|sd_url|nowatermark|no_watermark|audio)$/i.test(key) && typeof child === "string") addSource({ url: child, quality: value.quality || key }, key, true)
       else if (child && typeof child === "object" && !["cast", "performers", "audio_tracks", "trailer", "recommendations", "items", "featured", "episodes", "chapters", "cover", "image", "images", "media"].includes(key)) sourceWalk(child, depth + 1, key)

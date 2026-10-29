@@ -3,6 +3,7 @@ import { providerJson, ProviderError, webUrl } from "../providers/http"
 import { mediaFetch, allowedMediaUrl } from "../providers/media-url"
 import { seal } from "../library/tokens"
 import { preferPrimary } from "../providers/fallback"
+import { fileSize } from "../media-info"
 
 const base="https://nayan-video-downloader.vercel.app"
 const cache=new Map<string,{until:number;value:any}>()
@@ -101,7 +102,7 @@ async function verify(url:string,kind:"audio"|"video") {
   if(!bytes?.length||/html|json|text\//i.test(type)||/^[<{]/.test(prefix))throw new Error("Not a media file")
   if(kind==="audio"&&!/audio\/|application\/octet-stream|video\/(mp4|webm)/i.test(type))throw new Error("No audio stream")
   if(kind==="video"&&!/video\/|application\/octet-stream/i.test(type))throw new Error("No video stream")
-  return {url,format:kind==="video"?(/webm/i.test(type)?"WEBM":"MP4"):/webm/i.test(type)?"WEBM":/mp4|m4a/i.test(type)?"M4A":/aac/i.test(type)?"AAC":"MP3"}
+  return {url,sizeBytes:fileSize(response.headers),format:kind==="video"?(/webm/i.test(type)?"WEBM":"MP4"):/webm/i.test(type)?"WEBM":/mp4|m4a/i.test(type)?"M4A":/aac/i.test(type)?"AAC":"MP3"}
 }
 export async function resolveYoutube(input:string,kind:"audio"|"video",title="",quality="720p") {
   const source=youtubeUrl(input)
@@ -122,16 +123,25 @@ export async function resolveYoutube(input:string,kind:"audio"|"video",title="",
            const data=await providerJson(target,9000)
           const files=youtubeFiles(data,kind)
           if(!files.length)throw new Error("No full file")
-          const media=await Promise.any(files.map(url=>verify(url,kind)))
-           const info=data.result||data.data||data
-           const file=[...(Array.isArray(info.formats)?info.formats:[]),...(Array.isArray(info.medias)?info.medias:[])].find(item=>(item.url||item.downloadUrl)===media.url)
-           const returnedQuality=String(file?.quality||file?.resolution||file?.label||info.quality||"").match(/(\d{3,4})(?:p|\b)/)?.[1]
-           return {...media,quality:kind==="video"?(returnedQuality?`${returnedQuality}p`:"Auto"):undefined,title:String(info.title||data.title||fallbackTitle||"YouTube media")}
+          const checks=await Promise.allSettled(files.slice(0,6).map(url=>verify(url,kind)))
+          const info=data.result||data.data||data
+          const choices=checks.flatMap(check=>{
+            if(check.status!=="fulfilled")return []
+            const media=check.value
+            const file=[...(Array.isArray(info.formats)?info.formats:[]),...(Array.isArray(info.medias)?info.medias:[])].find(item=>(item.url||item.downloadUrl)===media.url)
+            const declared=String(file?.quality||file?.resolution||file?.label||info.quality||"")
+            const returnedQuality=declared.match(/(\d{3,4})(?:p|\b)/)?.[1]
+            const bitrate=declared.match(/(\d+)\s*k(?:b(?:p?s)?)?/i)?.[1]
+            return [{...media,quality:kind==="video"?(returnedQuality?`${returnedQuality}p`:"Auto"):bitrate?`${bitrate} kbps`:"Original quality"}]
+          })
+          if(!choices.length)throw new Error("No verified full files")
+          const selected=choices.find(choice=>choice.quality===quality)||choices[0]
+          return {...selected,choices,title:String(info.title||data.title||fallbackTitle||"YouTube media")}
          }
          const match=source?Promise.resolve({url:source,title}):youtubeSearch(query).then(items=>items[0])
          const primary=["ytdown","youtube","alldown"].map(action=>async()=>{
            const item=await match
-           return from(`${base}/${action}?${new URLSearchParams({url:item.url})}`,item.title)
+           return from(`${base}/${action}?${new URLSearchParams({url:item.url,quality})}`,item.title)
          })
          try{return await preferPrimary(primary,[()=>from(`https://knightbotapi.stream/api/${endpoint}?${params}`)],1200)}
          catch{throw new ProviderError(`Full ${kind} is temporarily unavailable from the media services. Retry or choose another video.`,502)}
@@ -142,5 +152,9 @@ export async function resolveYoutube(input:string,kind:"audio"|"video",title="",
   }
   const token=seal("media",{url:full.url,title:full.title,kind,format:full.format},21600)
   const playUrl=`/api/media?key=${token}`
-  return {success:true,title:full.title,format:full.format,quality:full.quality||"Auto",isPreview:false,playUrl,audioUrl:kind==="audio"?playUrl:undefined,downloadUrl:`${playUrl}&download=1`}
+  const choices=(full.choices||[full]).map((choice:any)=>{
+    const link=`/api/media?key=${seal("media",{url:choice.url,title:full.title,kind,format:choice.format},21600)}`
+    return {format:choice.format,quality:choice.quality,sizeBytes:choice.sizeBytes,playUrl:link,downloadUrl:`${link}&download=1`}
+  })
+  return {success:true,title:full.title,format:full.format,quality:full.quality||"Auto",sizeBytes:full.sizeBytes,choices,isPreview:false,playUrl,audioUrl:kind==="audio"?playUrl:undefined,downloadUrl:`${playUrl}&download=1`}
 }

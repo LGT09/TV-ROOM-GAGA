@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { AppLayout } from "@/components/app-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { saveMediaFile } from "@/lib/client-download"
+import { SongDownload } from "@/components/song-download"
 import {
   AlertCircle,
   Disc3,
@@ -69,7 +69,7 @@ export default function MusicPage() {
   const [error, setError] = useState("")
   const [chartMessage, setChartMessage] = useState("")
   const [playPendingKey, setPlayPendingKey] = useState<string | null>(null)
-  const [downloadPendingKey, setDownloadPendingKey] = useState<string | null>(null)
+  const [downloadSong,setDownloadSong]=useState<Track|null>(null)
   const [actionError, setActionError] = useState<{ key: string; message: string } | null>(null)
   const [activeTrack, setActiveTrack] = useState<Track | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -233,33 +233,7 @@ export default function MusicPage() {
   }
 
   const downloadTrack = async (track: Track) => {
-    const key = trackKey(track)
-    const source = track.videoId
-      ? `https://www.youtube.com/watch?v=${encodeURIComponent(track.videoId)}`
-      : track.downloadUrl || track.audioUrl || track.previewUrl || ""
-    if (!source) return
-    setDownloadPendingKey(key)
-    setActionError(null)
-    try {
-      const controller = new AbortController()
-      const params = new URLSearchParams({
-        action: "download-mp3",
-        url: source,
-        title: `${track.trackName} - ${track.artistName}`,
-      })
-      const data = await requestJson<{ success?: boolean; downloadUrl?: string; title?: string }>(
-        `/api/music?${params.toString()}`, controller,
-      )
-      if (!data.success || !data.downloadUrl) throw new Error("A full-song download isn’t available for this track right now.")
-      await saveMediaFile(data.downloadUrl,undefined,controller.signal)
-    } catch (reason) {
-      setActionError({
-        key,
-        message: reason instanceof Error ? reason.message : "Download couldn’t start. Please try again.",
-      })
-    } finally {
-      setDownloadPendingKey(null)
-    }
+    setDownloadSong(track)
   }
 
   return (
@@ -399,12 +373,12 @@ export default function MusicPage() {
                           type="button"
                           variant="ghost"
                           onClick={() => void downloadTrack(track)}
-                          disabled={!!downloadPendingKey || !(track.videoId || track.downloadUrl || track.audioUrl || track.previewUrl)}
+                          disabled={!(track.videoId || track.downloadUrl || track.audioUrl || track.previewUrl)}
                           aria-label={`Download full song ${track.trackName}`}
                           title="Download full song"
                           className="h-10 w-10 rounded-xl p-0"
                         >
-                          {downloadPendingKey === key ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                          <Download className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -463,6 +437,7 @@ export default function MusicPage() {
           />
         </section>
       </main>
+      {downloadSong&&<SongDownload song={downloadSong} onClose={()=>setDownloadSong(null)}/>}
     </AppLayout>
   )
 }
