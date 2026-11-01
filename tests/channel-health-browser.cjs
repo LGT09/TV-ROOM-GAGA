@@ -4,7 +4,6 @@ const assert=require("node:assert/strict")
   const browser=await chromium.launch({executablePath:"/repl/tools/bin/chromium",args:["--no-sandbox"]})
   try{
     const context=await browser.newContext({viewport:{width:390,height:844}})
-    await context.route("https://acscdn.com/**",route=>route.abort())
     const page=await context.newPage(),errors=[]
     page.on("pageerror",error=>errors.push(error.message))
     let pings=0

@@ -1,6 +1,6 @@
 "use client"
 
-import { Compass, Film, Home, Info, Menu, Music, Radio, Search, Wrench, FileText } from "lucide-react"
+import { Compass, Film, Home, Info, Menu, Music, Radio, Search, Wrench, FileText, Trophy } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 const navigation = [
   { name: "Home", href: "/home", icon: Home }, { name: "Movies & series", href: "/movies", icon: Film },
   { name: "Discover", href: "/discover", icon: Compass }, { name: "Search", href: "/search", icon: Search },
-  { name: "Music", href: "/music", icon: Music }, { name: "Live TV", href: "/live-tv", icon: Radio },
+  { name: "Music", href: "/music", icon: Music }, { name: "Live TV", href: "/live-tv", icon: Radio }, { name: "Sport", href: "/sport", icon: Trophy },
   { name: "Media tools", href: "/downloader", icon: Wrench }, { name: "About", href: "/about", icon: Info },
   { name: "Help & guide", href: "/docs", icon: FileText },
 ]

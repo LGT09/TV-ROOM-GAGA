@@ -177,27 +177,9 @@ test("channel ping rejects arbitrary URLs, unknown IDs and oversized batches",as
   assert.equal(result.status,200);assert.equal((await result.json()).results[0].active,true)
 })
 
-test("Adcash initializes the exact zone once after the library loads",()=>{
-  const vm=require("node:vm")
-  const {adcashBootstrap}=sandbox()("lib/adcash.ts")
-  const listeners={},calls=[]
-  const window={addEventListener:(event,callback)=>{listeners["window:"+event]=callback}}
-  const document={getElementById:id=>{assert.equal(id,"aclib");return {addEventListener:(event,callback)=>{listeners[event]=callback}}}}
-  const context=vm.createContext({window,document})
-  vm.runInContext(adcashBootstrap,context)
-  assert.equal(calls.length,0)
-  window.aclib={runAutoTag:options=>calls.push(options.zoneId)}
-  listeners.load()
-  listeners["window:load"]()
-  vm.runInContext(adcashBootstrap,context)
-  assert.deepEqual(calls,["txhkagiska"])
-})
-test("Adcash errors or a blocked library do not throw into the application",()=>{
-  const vm=require("node:vm")
-  const {adcashBootstrap}=sandbox()("lib/adcash.ts")
-  for(const aclib of [undefined,{runAutoTag:()=>{throw new Error("Blocked")}}]){
-    assert.doesNotThrow(()=>vm.runInNewContext(adcashBootstrap,{window:{aclib,addEventListener:()=>{}},document:{getElementById:()=>null}}))
-  }
+test("the global document does not inject third-party script tags",()=>{
+  const source=fs.readFileSync(path.resolve("app/layout.tsx"),"utf8")
+  assert.doesNotMatch(source,/<script\b/i)
 })
 test("a slow default movie resolver is hedged by a same-subject file connection",async()=>{
   const calls=[]

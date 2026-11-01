@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "TV Room GAGA",
+  "short_name": "TV Room",
+  "description": "Movies, live television, sport and music.",
+  "start_url": "/home",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#171923",
+  "theme_color": "#741f36",
+  "categories": ["entertainment", "video", "music"],
+  "icons": [
+    { "src": "/tvroom-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

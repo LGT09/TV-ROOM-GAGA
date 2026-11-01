@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, Globe2, Radio, RotateCw, Search, Tv } from "lucide-react"
+import { AlertCircle, Globe2, Radio, RotateCw, Search, Tv, Share2 } from "lucide-react"
 import { AppLayout } from "@/components/app-layout"
 import { MediaPlayback } from "@/components/media-playback"
 import { Button } from "@/components/ui/button"
@@ -32,6 +32,7 @@ export function LiveTvCatalogue() {
   const [health,setHealth]=useState<Record<string,Health>>({})
   const [checking,setChecking]=useState(false)
   const [activeOnly,setActiveOnly]=useState(false)
+  const [shareMessage,setShareMessage]=useState("")
   const [checked,setChecked]=useState(0)
   const healthRequest=useRef<AbortController|null>(null)
   const checkChannels=async()=>{
@@ -87,6 +88,14 @@ export function LiveTvCatalogue() {
     }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:"Channel stream unavailable.")}
     finally{if(!controller.signal.aborted)setSelecting(false)}
   }
+  const shareChannel=async()=>{
+    if(!selected)return
+    const url=`${window.location.origin}/live/${encodeURIComponent(selected.id)}`
+    try{
+      if(navigator.share)await navigator.share({title:`${selected.name} · TV Room GAGA`,url})
+      else{await navigator.clipboard.writeText(url);setShareMessage("Channel link copied.")}
+    }catch(error){if(!(error instanceof DOMException&&error.name==="AbortError"))setShareMessage("Could not share this channel.")}
+  }
   const categoryOptions=["",...categories]
   const visibleChannels=activeOnly?channels.filter(channel=>health[channel.id]?.active&&Date.now()-health[channel.id].checkedAt<120000):channels
   return <AppLayout><main className="page-shell space-y-5">
@@ -104,8 +113,10 @@ export function LiveTvCatalogue() {
           {selected&&<div className="mt-4 flex items-center gap-3">
             {selected.logo&&<img src={selected.logo} alt="" className="w-14 h-10 object-contain rounded-lg bg-white/80 p-1" onError={e=>{e.currentTarget.style.visibility="hidden"}}/>}
             <div className="min-w-0"><h2 className="font-semibold break-words">{selected.name}</h2><p className="text-xs text-muted-foreground">{selected.category} · {countryInfo(selected.country||"").flag} {countryInfo(selected.country||"").name}</p></div>
+            <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={()=>void shareChannel()}><Share2 className="mr-1 h-4 w-4"/>Share</Button>
             {stream&&<span className="ml-auto text-xs rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-accent-foreground">Stream URL resolved</span>}
           </div>}
+          {shareMessage&&<p role="status" className="mt-2 text-xs text-muted-foreground">{shareMessage}</p>}
         </div>
         {error&&<div role="alert" className="glass rounded-xl p-4 flex items-center gap-3 text-sm"><AlertCircle className="h-5 w-5 text-primary shrink-0"/><span className="flex-1">{error}</span><Button size="sm" variant="outline" onClick={()=>selected?selectChannel(selected):load(offset)}>Retry</Button></div>}
       </section>

@@ -1,6 +1,5 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { MusicPlayerProvider } from "@/components/music-player-provider"
@@ -8,7 +7,7 @@ import { DownloadManagerProvider } from "@/components/download-manager-provider"
 import { PlaylistManagerProvider } from "@/components/playlist-manager-provider"
 import { AIAssistant } from "@/components/ai-assistant"
 import { VideoExports } from "@/components/video-exports"
-import { adcashBootstrap } from "@/lib/adcash"
+import { PwaRegister } from "@/components/pwa-register"
 
 export const metadata: Metadata = {
   title: "TV Room GAGA - Movies, Series, Cinema & Entertainment",
@@ -19,6 +18,7 @@ export const metadata: Metadata = {
     shortcut: "/tvroom-logo.png",
     apple: "/tvroom-logo.png",
   },
+  manifest: "/manifest.webmanifest",
 }
 
 export default function RootLayout({
@@ -28,10 +28,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script id="aclib" type="text/javascript" src="https://acscdn.com/script/aclib.js" async />
-        <script id="adcash-auto-tag" type="text/javascript" dangerouslySetInnerHTML={{__html:adcashBootstrap}} />
-      </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
           <DownloadManagerProvider>
@@ -40,11 +36,11 @@ export default function RootLayout({
                 {children}
                 <AIAssistant />
                 <VideoExports />
+                <PwaRegister />
               </MusicPlayerProvider>
             </PlaylistManagerProvider>
           </DownloadManagerProvider>
         </ThemeProvider>
-        <Analytics />
       </body>
     </html>
   )

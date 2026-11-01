@@ -1,0 +1,18 @@
+{
+  "packageId": "com.example.tvroomgaga",
+  "host": "YOUR_PUBLISHED_HOSTNAME",
+  "name": "TV Room GAGA",
+  "launcherName": "TV Room",
+  "display": "standalone",
+  "startUrl": "/home",
+  "iconUrl": "https://YOUR_PUBLISHED_HOSTNAME/tvroom-logo.png",
+  "themeColor": "#741f36",
+  "navigationColor": "#171923",
+  "backgroundColor": "#171923",
+  "enableNotifications": false,
+  "shortcuts": [],
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "tvroom"
+  }
+}

@@ -6,7 +6,7 @@ import { AppLayout } from "@/components/app-layout"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { AlertCircle, ArrowDownToLine, ExternalLink, Link2, ShieldCheck } from "lucide-react"
+import { AlertCircle, ArrowDownToLine, ExternalLink, Link2, ShieldCheck, Share2 } from "lucide-react"
 import { YoutubeMediaTools } from "@/components/youtube-media-tools"
 import { CheckedDownload } from "@/components/checked-download"
 
@@ -22,6 +22,8 @@ function DownloadPanel({platform,hint,placeholder}:{platform:Platform;hint:strin
   const [loading,setLoading]=useState(false)
   const [result,setResult]=useState<DownloadResult|null>(null)
   const [error,setError]=useState("")
+  const [shareLink,setShareLink]=useState("")
+  const [shareBusy,setShareBusy]=useState(false)
   const controllerRef=useRef<AbortController|null>(null)
   useEffect(()=>()=>controllerRef.current?.abort(),[])
   const run=async(e:React.FormEvent)=>{
@@ -30,7 +32,7 @@ function DownloadPanel({platform,hint,placeholder}:{platform:Platform;hint:strin
     controllerRef.current?.abort()
     const controller=new AbortController()
     controllerRef.current=controller
-    setLoading(true);setError("");setResult(null)
+    setLoading(true);setError("");setResult(null);setShareLink("")
     const timeout=setTimeout(()=>controller.abort(),20000)
     try{
       const params=new URLSearchParams({platform,url:input.trim()})
@@ -40,8 +42,14 @@ function DownloadPanel({platform,hint,placeholder}:{platform:Platform;hint:strin
       try{data=JSON.parse(text) as DownloadResult}catch{throw new Error("The media service returned an unreadable response. Please try again.")}
       if(!response.ok||!data.success)throw new Error(data.error||"No download links were returned.")
       setResult(data)
+      if(platform==="tiktok"){
+        setShareBusy(true)
+        const shareResponse=await fetch("/api/share/tiktok",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:input.trim()}),signal:controller.signal})
+        const shareData=await shareResponse.json()
+        if(shareResponse.ok&&shareData.url)setShareLink(shareData.url)
+      }
     }catch(e){setError(controller.signal.aborted?"The request was cancelled or took too long. Please retry.":e instanceof Error?e.message:"Could not resolve this media. Check the input and retry.")}
-    finally{clearTimeout(timeout);if(controllerRef.current===controller){controllerRef.current=null;setLoading(false)}}
+    finally{clearTimeout(timeout);if(controllerRef.current===controller){controllerRef.current=null;setLoading(false);setShareBusy(false)}}
   }
   return <div className="glass-card rounded-3xl p-5 md:p-7 space-y-5">
     <form onSubmit={run} className="space-y-4">
@@ -61,6 +69,7 @@ function DownloadPanel({platform,hint,placeholder}:{platform:Platform;hint:strin
         <div><h3 className="font-semibold">{result.title||"Resolved media"}</h3><p className="text-xs text-muted-foreground mt-1">{result.links?.length||0} link options returned by the service</p></div>
       </div>
       {result.links?.length?<div className="space-y-2">{result.links.map((link,i)=><CheckedDownload key={link.url+i} url={link.url} label={`${link.label||"Download"}${link.quality?` · ${link.quality}`:""}`}/>)}</div>:<p className="text-sm text-muted-foreground">The service returned no download options.</p>}
+      {platform==="tiktok"&&<Button type="button" variant="outline" disabled={shareBusy} onClick={async()=>{if(shareLink){await navigator.clipboard?.writeText(`${window.location.origin}${shareLink}`);return}setShareBusy(true);try{const response=await fetch("/api/share/tiktok",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:input.trim()})});const data=await response.json();if(!response.ok)throw new Error(data.error);setShareLink(data.url);await navigator.clipboard?.writeText(`${window.location.origin}${data.url}`)}catch(e){setError(e instanceof Error?e.message:"Could not create a share link.")}finally{setShareBusy(false)}}}><Share2 className="mr-2 h-4 w-4"/>{shareBusy?"Preparing link…":shareLink?"Copy TikTok link":"Create TikTok share link"}</Button>}
     </div>}
   </div>
 }

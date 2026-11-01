@@ -17,7 +17,11 @@ export async function GET(request: Request) {
     let lastError:unknown
     for(const url of [token.url,...(Array.isArray(token.fallbacks)?token.fallbacks.slice(0,2):[])]) {
       try {
-        const candidate=await mediaFetch(url,range?{Range:range}:{},8000)
+        const mediaHost=new URL(url).hostname
+        const sportHeaders:Record<string,string>=mediaHost==="aisports.mobi"||mediaHost.endsWith(".aisports.mobi")
+          ? { Referer: "https://www.sportslive.wine/", Origin: "https://www.sportslive.wine", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" }
+          : {}
+        const candidate=await mediaFetch(url,{...sportHeaders,...(range?{Range:range}:{})},8000)
         if(/text\/html|application\/json/i.test(candidate.headers.get("content-type")||"")){
           await candidate.body?.cancel()
           throw new ProviderError("The media file is unavailable.")

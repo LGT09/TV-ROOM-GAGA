@@ -13,7 +13,6 @@ const assert=require("node:assert/strict")
         if(anchor&&/\/api\/(?:media|music-extras)\?/.test(anchor.href)){event.preventDefault();window.__downloadHandoffs.push(anchor.href)}
       },true)
     })
-    await context.route("https://acscdn.com/**",route=>route.abort())
     const page=await context.newPage(),errors=[]
     page.on("pageerror",error=>errors.push(error.message))
     const song={trackId:"example",trackName:"Example Song",artistName:"Example Artist",videoId:"YQHsXMglC9A",isPreview:false}
