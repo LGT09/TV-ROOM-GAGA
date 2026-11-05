@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { readApiJson } from "@/lib/client-json"
 
-type Movie = { subjectId: string; title: string; cover: string; genre: string; imdbRatingValue: string | number; releaseDate?: string }
+type Movie = { subjectId: string; detailPath?: string; title: string; cover: string; genre: string; imdbRatingValue: string | number; releaseDate?: string; resourceKey?: string }
 type SearchResult = { results: Movie[]; page: number; nextPage: number | null; hasMore: boolean; totalCount?: number }
 
 export function MovieBoxBrowser() {
@@ -54,10 +54,15 @@ export function MovieBoxBrowser() {
     {result && <>
       <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground"><span>{result.totalCount ? `${result.totalCount.toLocaleString()} results` : `${result.results.length} titles`} · page {result.page}</span><span>20 per page</span></div>
       {result.results.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
-        {result.results.map(movie => <Link key={movie.subjectId} href={`/mv/${movie.subjectId}`} className="group min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card/70 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+         {result.results.map(movie => {
+           const query = new URLSearchParams({ title: movie.title })
+           if (movie.detailPath) query.set("detailPath", movie.detailPath)
+           if (movie.resourceKey) query.set("resource", movie.resourceKey)
+           return <Link key={movie.subjectId} href={`/mv/${movie.subjectId}?${query}`} className="group min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card/70 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <div className="relative aspect-[2/3] overflow-hidden bg-muted">{movie.cover && <img loading="lazy" src={movie.cover} alt={`${movie.title} poster`} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" onError={event => { event.currentTarget.style.display = "none" }} />}<span className="absolute bottom-2 left-2 rounded-full bg-black/75 px-2 py-1 text-[10px] font-semibold text-white">{movie.releaseDate?.slice(0, 4) || "Movie"}</span></div>
           <div className="space-y-1.5 p-3"><h2 className="line-clamp-2 min-h-10 text-sm font-semibold leading-5">{movie.title}</h2><p className="line-clamp-1 text-[11px] text-muted-foreground">{movie.genre || "Genre not listed"}</p>{movie.imdbRatingValue && <span className="inline-flex items-center gap-1 text-xs text-amber-600"><Star className="h-3 w-3 fill-current" />{movie.imdbRatingValue}</span>}</div>
-        </Link>)}
+         </Link>
+         })}
       </div> : !loading && <div className="glass-card rounded-xl p-6 text-center text-sm text-muted-foreground">No matching titles were returned.</div>}
       <div className="flex items-center justify-center gap-3 py-2">
         <Button variant="outline" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}><ChevronLeft className="mr-1 h-4 w-4" />Previous</Button>

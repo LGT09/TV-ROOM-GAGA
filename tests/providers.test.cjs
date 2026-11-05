@@ -17,6 +17,7 @@ function load(file) {
 const { normalizeProvider } = load("lib/providers/normalize.ts")
 const { parseM3u } = load("lib/providers/iptv.ts")
 const { allowedMediaUrl } = load("lib/providers/media-url.ts")
+const { movieResourcePayload, movieSourceCandidates } = load("lib/providers/moviebox-resources.ts")
 const { providers } = load("lib/providers/registry.ts")
 const { runProvider } = load("lib/providers/service.ts")
 
@@ -65,6 +66,21 @@ test("M3U parser associates attributes with HTTPS URLs, excluding mixed content"
 test("media proxies cannot fetch arbitrary URLs or credentials", () => {
   for (const url of ["http://127.0.0.1", "https://127.0.0.1", "https://example.com", "https://hakunaymatata.com.evil.example/file", "https://user:pass@cacdn.hakunaymatata.com/file", "https://cacdn.hakunaymatata.com:5000/test"]) assert.throws(() => allowedMediaUrl(url))
   assert.equal(allowedMediaUrl("https://cacdn.hakunaymatata.com/subtitle/test.srt").hostname, "cacdn.hakunaymatata.com")
+  assert.equal(allowedMediaUrl("https://proxy.cinemind.name.ng/api/proxy").hostname, "proxy.cinemind.name.ng")
+  assert.throws(() => allowedMediaUrl("https://other.cinemind.name.ng/api/proxy"))
+})
+test("MovieBox resource URLs are read from direct or nested results with separate play and download fallbacks", () => {
+  const proxy = "https://proxy.cinemind.name.ng/api/proxy?url=https%3A%2F%2Fbcdnw.hakunaymatata.com%2Fmovie.mp4"
+  const direct = "https://bcdnw.hakunaymatata.com/movie.mp4"
+  const item = { subjectId: "8906247916759695608", streamUrl: proxy, downloadUrl: proxy, directUrl: direct }
+  assert.deepEqual(movieSourceCandidates(item, "stream"), [direct, proxy])
+  assert.deepEqual(movieSourceCandidates(item, "download"), [direct, proxy])
+  const nested = movieResourcePayload({ qualities: [], availableStreams: [], data: { results: [{ subjectId: "other", proxyStream: "https://cdn.example/wrong.mp4" }, { ...item, proxyStream: proxy }] } }, item.subjectId)
+  assert.equal(nested.subjectId, item.subjectId)
+  assert.deepEqual(movieSourceCandidates(nested, "stream"), [proxy, direct])
+  assert.deepEqual(movieSourceCandidates({ bestQualityUrl: direct }, "stream"), [direct])
+  assert.deepEqual(movieSourceCandidates({ proxyStream: "/api/media?key=signed" }, "stream"), ["/api/media?key=signed"])
+  assert.equal(load("lib/providers/moviebox-resources.ts").movieLocalMediaPath("/api/media?key=signed", true), "/api/media?key=signed&download=1")
 })
 test("provider routing validates unknown provider, slug paths and query inputs", async () => {
   await assert.rejects(runProvider("not-real", "home", new URLSearchParams()), /Unknown provider/)

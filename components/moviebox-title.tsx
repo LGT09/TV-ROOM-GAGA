@@ -14,8 +14,8 @@ type Source = { quality: string; format: string; size: string | number; proxyStr
 type MovieDetail = { subjectId: string; title: string; cover: string; genre: string; description: string; releaseDate: string; imdbRatingValue: string; detailPath: string }
 type Subtitle = { language: string; label: string; url: string }
 
-export function MovieBoxTitle({ subjectId, initialTitle = "Movie" }: { subjectId: string; initialTitle?: string }) {
-  const [movie, setMovie] = useState<MovieDetail | null>(null)
+export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie, resourceKey }: { subjectId: string; initialTitle?: string; initialMovie?: MovieDetail; resourceKey?: string }) {
+  const [movie, setMovie] = useState<MovieDetail | null>(initialMovie || null)
   const [sources, setSources] = useState<Source[]>([])
   const [subtitles, setSubtitles] = useState<Subtitle[]>([])
   const [subtitle, setSubtitle] = useState("")
@@ -27,18 +27,24 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie" }: { subjectId
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    fetch(`/api/moviebox?action=detail&subjectId=${encodeURIComponent(subjectId)}`, { cache: "no-store", signal: controller.signal })
+    const params = new URLSearchParams({ action: "detail", subjectId })
+    if (resourceKey) params.set("resourceKey", resourceKey)
+    if (initialMovie?.detailPath) {
+      params.set("detailPath", initialMovie.detailPath)
+      params.set("title", initialMovie.title)
+    }
+    fetch(`/api/moviebox?${params}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
         const data = await readApiJson(response)
         if (!response.ok || data.success === false) throw new Error(data.error || "Movie details could not be loaded.")
-        setMovie(data.subject)
+        setMovie(current => ({ ...current, ...data.subject, cover: data.subject?.cover || current?.cover || "", genre: data.subject?.genre || current?.genre || "", description: data.subject?.description || current?.description || "", releaseDate: data.subject?.releaseDate || current?.releaseDate || "", imdbRatingValue: data.subject?.imdbRatingValue || current?.imdbRatingValue || "" }))
         setSources(data.sources || [])
         setSubtitles(data.proxySubtitles || [])
       })
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Movie details could not be loaded.") })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [subjectId])
+  }, [subjectId, initialMovie?.detailPath, initialMovie?.title, resourceKey])
 
   const share = async () => {
     const url = `${window.location.origin}/mv/${encodeURIComponent(subjectId)}`

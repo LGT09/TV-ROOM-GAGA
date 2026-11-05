@@ -1,20 +1,29 @@
 import "server-only"
 
-import { BROWSER_USER_AGENT, ProviderError } from "./http"
+import { BROWSER_USER_AGENT, ProviderError, providerJson } from "./http"
 import { allowedMediaUrl } from "./media-url"
 import { seal } from "@/lib/library/tokens"
+import { movieLocalMediaPath, movieResourcePayload, movieSourceCandidates } from "./moviebox-resources"
 
 const API = "https://api.omegatech.app/api/movie/MovieBox-pro"
+const BACKUP = "https://moviebox-api-eight.vercel.app"
+const METADATA = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
+const metadataHeaders = { Origin: "https://moviebox.ph", Referer: "https://moviebox.ph/" }
 const searchCache = new Map<string, { expires: number; value: unknown }>()
-function safeSource(value: unknown, title: string, download = false) {
-  if (typeof value !== "string" || !value) return null
-  if (/^\/api\/media(?:\?|$)/.test(value)) return value
-  try {
-    const url = allowedMediaUrl(value)
-    const hls = /\.m3u8(?:[?#]|$)/i.test(url.href)
-    const token = seal("media", { url: url.href, kind: "video", title, format: hls ? "HLS" : "MP4", downloadMode: download ? "original" : undefined }, 21600)
-    return `/api/media?key=${token}${download ? "&download=1" : hls ? "&format=hls" : ""}`
-  } catch { return null }
+const detailCache = new Map<string, { expires: number; value: any }>()
+function safeSource(item: any, title: string, download = false) {
+  const values = movieSourceCandidates(item, download ? "download" : "stream")
+  const local = values.map(value => movieLocalMediaPath(value, download)).find(Boolean)
+  if (local) return local
+  const urls: string[] = []
+  for (const value of values) {
+    try { urls.push(allowedMediaUrl(value).href) } catch {}
+  }
+  if (!urls.length) return null
+  const [primary, ...fallbacks] = [...new Set(urls)]
+  const hls = /\.m3u8(?:[?#]|$)/i.test(primary)
+  const token = seal("media", { url: primary, fallbacks: fallbacks.slice(0, 2), kind: "video", title, format: hls ? "HLS" : "MP4", downloadMode: download ? "original" : undefined }, 21600)
+  return `/api/media?key=${token}${download ? "&download=1" : hls ? "&format=hls" : ""}`
 }
 function safeCaptions(value: any) {
   const items = Array.isArray(value) ? value : typeof value === "object" && value ? Object.values(value) : []
@@ -52,30 +61,60 @@ export async function movieSearch(query: string, page: number) {
   const key = `${query.toLowerCase()}\n${page}`
   const cached = searchCache.get(key)
   if (cached && cached.expires > Date.now()) return cached.value
-  const raw = await movieBoxJson({ action: "search", keyword: query, page: String(page) })
-  const payload = raw?.data?.data || raw?.data || raw
-  const items = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
+  let raw: any
+  let primaryError: unknown
+  try { raw = await movieBoxJson({ action: "search", keyword: query, page: String(page) }) }
+  catch (error) { primaryError = error }
+  let payload = raw?.data?.data || raw?.data || raw
+  let items = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
+  if (!items.length) {
+    try {
+      const url = new URL(`${BACKUP}/search`)
+      url.search = new URLSearchParams({ q: query, page: String(page) }).toString()
+      raw = await providerJson(url.href, 12000)
+      payload = raw?.data?.data || raw?.data || raw
+      items = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
+    } catch {
+      if (primaryError) throw primaryError
+    }
+  }
   const pager = payload?.pager || payload?.pagination || {}
+  const totalCount = Number(pager.totalCount || payload?.total) || undefined
+  const hasMore = Boolean(pager.hasMore ?? payload?.hasMore ?? (totalCount ? page * 20 < totalCount : false))
   const value = {
     success: true,
-    results: items.map((item: any) => ({
-      subjectId: String(item.subjectId || item.id || ""),
-      detailPath: String(item.detailPath || ""),
-      title: String(item.title || "Untitled"),
-      cover: item.cover?.url || item.cover || item.thumbnail || "",
-      genre: item.genre || item.genres || "",
-      imdbRatingValue: item.imdbRatingValue ?? item.rating ?? "",
-      description: item.description || "",
-      releaseDate: item.releaseDate || "",
-      proxyStream: safeSource(item.proxyStream, String(item.title || "Movie")),
-      proxyDownload: safeSource(item.proxyDownload, String(item.title || "Movie"), true),
-      proxySubtitles: safeCaptions(item.proxySubtitles),
-      subjectType: item.subjectType,
-    })).filter((item: any) => /^\d{5,32}$/.test(item.subjectId)),
-    page: Number(pager.page) || page,
-    nextPage: Number(pager.nextPage) || (pager.hasMore ? page + 1 : null),
-    hasMore: Boolean(pager.hasMore),
-    totalCount: Number(pager.totalCount) || undefined,
+    results: items.map((item: any) => {
+      const subjectId = String(item.subjectId || item.subject_id || item.id || "")
+      const title = String(item.title || item.name || "Untitled")
+      const proxyStream = safeSource(item, title)
+      const proxyDownload = safeSource(item, title, true)
+      const proxySubtitles = safeCaptions(item.proxySubtitles)
+      const movie = {
+        subjectId,
+        detailPath: String(item.detailPath || item.detail_path || item.slug || ""),
+        title,
+        cover: item.cover?.url || item.cover || item.poster || item.poster_url || item.thumbnail || "",
+        genre: item.genre || item.genres || "",
+        imdbRatingValue: item.imdbRatingValue ?? item.rating ?? item.imdbRating ?? "",
+        description: item.description || item.overview || "",
+        releaseDate: item.releaseDate || item.release_date || item.year || "",
+        proxyStream,
+        proxyDownload,
+        proxySubtitles,
+        subjectType: item.subjectType || item.subject_type,
+        quality: String(item.quality || item.resolution || "Auto"),
+        format: String(item.format || "MP4"),
+        size: item.size || "",
+      }
+      const resourceKey = proxyStream || proxyDownload
+        ? seal("movie-resource", movie, 1800)
+        : ""
+      return { ...movie, resourceKey }
+    }).filter((item: any) => /^\d{5,32}$/.test(item.subjectId)),
+    page: Number(pager.page || payload?.page) || page,
+    nextPage: Number(pager.nextPage || payload?.nextPage) || (hasMore ? page + 1 : null),
+    hasMore,
+    totalCount,
   }
   searchCache.set(key, { expires: Date.now() + 30000, value })
   if (searchCache.size > 50) searchCache.delete(searchCache.keys().next().value!)
@@ -83,10 +122,46 @@ export async function movieSearch(query: string, page: number) {
 }
 
 export async function movieDetail(subjectId: string) {
-  const raw = await movieBoxJson({ action: "detail", subjectId })
-  return raw?.data?.subject || raw?.subject || raw?.data || raw
+  const cached = detailCache.get(subjectId)
+  if (cached && cached.expires > Date.now()) return cached.value
+  let subject: any
+  try {
+    const raw = await movieBoxJson({ action: "detail", subjectId })
+    subject = raw?.data?.subject || raw?.subject || raw?.data || raw
+  } catch (primaryError) {
+    try {
+      const meta = await providerJson(`${METADATA}/detail?subjectId=${encodeURIComponent(subjectId)}`, 10000, metadataHeaders)
+      const path = meta?.data?.subject?.detailPath || meta?.data?.detailPath || ""
+      const raw = await providerJson(`${BACKUP}/detail/${encodeURIComponent(path || subjectId)}`, 12000)
+      subject = raw?.data?.subject || raw?.data || raw?.subject || raw
+    } catch {
+      throw primaryError
+    }
+  }
+  if (!subject?.title && !subject?.subjectId) throw new ProviderError("Movie details were not found.", 404)
+  subject = { ...subject, subjectId: String(subject.subjectId || subject.subject_id || subjectId) }
+  detailCache.set(subjectId, { expires: Date.now() + 60_000, value: subject })
+  if (detailCache.size > 100) detailCache.delete(detailCache.keys().next().value!)
+  return subject
 }
 
 export async function movieResourceResponse(subjectId: string, detailPath: string, season = "0", episode = "0") {
-  return movieBoxJson({ action: "download", subjectId, detailPath, se: season, ep: episode }, 22000)
+  let primary: any
+  try { primary = await movieBoxJson({ action: "download", subjectId, detailPath, se: season, ep: episode }, 18000) }
+  catch (error) {
+    try {
+      const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
+      return await providerJson(`${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`, 12000)
+    } catch { throw error }
+  }
+  const payload = movieResourcePayload(primary, subjectId)
+  const sources = Array.isArray(payload?.qualities) ? payload.qualities
+    : Array.isArray(payload?.sources) ? payload.sources
+    : Array.isArray(payload?.availableStreams) ? payload.availableStreams : []
+  if (sources.some((item: any) => movieSourceCandidates(item, "stream").length || movieSourceCandidates(item, "download").length) ||
+      movieSourceCandidates(payload, "stream").length || movieSourceCandidates(payload, "download").length) return primary
+  try {
+    const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
+    return await providerJson(`${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`, 12000)
+  } catch { return primary }
 }
