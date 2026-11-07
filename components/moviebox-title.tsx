@@ -13,10 +13,12 @@ import { formatFileSize } from "@/lib/media-info"
 type Source = { quality: string; format: string; size: string | number; proxyStream: string; proxyDownload: string }
 type MovieDetail = { subjectId: string; title: string; cover: string; genre: string; description: string; releaseDate: string; imdbRatingValue: string; detailPath: string }
 type Subtitle = { language: string; label: string; url: string }
+type DownloadPage = { quality: string; size: string; url: string }
 
 export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie, resourceKey }: { subjectId: string; initialTitle?: string; initialMovie?: MovieDetail; resourceKey?: string }) {
   const [movie, setMovie] = useState<MovieDetail | null>(initialMovie || null)
   const [sources, setSources] = useState<Source[]>([])
+  const [downloadPages, setDownloadPages] = useState<DownloadPage[]>([])
   const [subtitles, setSubtitles] = useState<Subtitle[]>([])
   const [subtitle, setSubtitle] = useState("")
   const [selected, setSelected] = useState(0)
@@ -39,6 +41,7 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
         if (!response.ok || data.success === false) throw new Error(data.error || "Movie details could not be loaded.")
         setMovie(current => ({ ...current, ...data.subject, cover: data.subject?.cover || current?.cover || "", genre: data.subject?.genre || current?.genre || "", description: data.subject?.description || current?.description || "", releaseDate: data.subject?.releaseDate || current?.releaseDate || "", imdbRatingValue: data.subject?.imdbRatingValue || current?.imdbRatingValue || "" }))
         setSources(data.sources || [])
+        setDownloadPages(data.downloadPages || [])
         setSubtitles(data.proxySubtitles || [])
       })
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Movie details could not be loaded.") })
@@ -47,7 +50,12 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
   }, [subjectId, initialMovie?.detailPath, initialMovie?.title, resourceKey])
 
   const share = async () => {
-    const url = `${window.location.origin}/mv/${encodeURIComponent(subjectId)}`
+    const params = new URLSearchParams()
+    if (resourceKey) params.set("resource", resourceKey)
+    if (movie?.title || initialTitle) params.set("title", movie?.title || initialTitle)
+    if (movie?.detailPath) params.set("detailPath", movie.detailPath)
+    const suffix = params.size ? `?${params}` : ""
+    const url = `${window.location.origin}/mv/${encodeURIComponent(subjectId)}${suffix}`
     try {
       if (navigator.share) await navigator.share({ title: movie?.title || initialTitle, url })
       else { await navigator.clipboard.writeText(url); setShareMessage("Link copied.") }
@@ -68,7 +76,7 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
           {movie?.description && <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{movie.description}</p>}
           {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />Loading playback and download sources…</p>}
           {error && <p role="alert" className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-          {!loading && !sources.length && !error && <p role="status" className="rounded-xl bg-muted/70 p-3 text-sm text-muted-foreground">No playable or downloadable source is available for this title right now.</p>}
+          {!loading && !sources.length && !downloadPages.length && !error && <p role="status" className="rounded-xl bg-muted/70 p-3 text-sm text-muted-foreground">No playable or downloadable source is available for this title right now.</p>}
         </div>
       </div>
     </section>
@@ -80,6 +88,14 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
       {current.proxyStream ? <MediaPlayback key={current.proxyStream} src={current.proxyStream} title={movie?.title || initialTitle} subtitles={subtitle ? subtitles.filter(item => item.url === subtitle) : []} /> : <p role="status" className="text-sm text-muted-foreground">A playback source is unavailable, but downloads may still be available.</p>}
       {subtitles.length > 0 && <div className="flex flex-wrap items-center gap-2"><label htmlFor="movie-subtitles" className="text-sm font-medium">Subtitles</label><select id="movie-subtitles" value={subtitle} onChange={event => setSubtitle(event.target.value)} className="h-10 rounded-lg border border-border bg-card px-3 text-sm"><option value="">Off</option>{subtitles.map((item, index) => <option key={`${item.url}-${index}`} value={item.url}>{item.label || item.language}</option>)}</select></div>}
     </section>}
-    {!loading && movie && !sources.length && <div className="glass-card rounded-2xl p-4"><div className="flex items-center gap-2"><Film className="h-4 w-4 text-primary" /><span className="text-sm">{movie.title}</span><Button variant="ghost" size="sm" className="ml-auto" onClick={() => void share()}><Copy className="mr-1 h-4 w-4" />Copy link</Button></div></div>}
+    {downloadPages.length > 0 && <section className="glass-card space-y-3 rounded-3xl p-4 sm:p-5">
+      <div><h2 className="font-display text-xl">Download options</h2><p className="mt-1 text-xs text-muted-foreground">These providers supply download pages rather than direct video files. Choose an option to continue.</p></div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {downloadPages.map((page, index) => <a key={`${page.quality}-${index}`} href={page.url} target="_blank" rel="noopener noreferrer" className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/65 px-4 py-3 text-sm transition hover:border-primary/50 hover:bg-card">
+          <span className="font-medium">{page.quality}</span><span className="text-xs text-muted-foreground">{page.size || "Open download page"}</span>
+        </a>)}
+      </div>
+    </section>}
+    {!loading && movie && !sources.length && !downloadPages.length && <div className="glass-card rounded-2xl p-4"><div className="flex items-center gap-2"><Film className="h-4 w-4 text-primary" /><span className="text-sm">{movie.title}</span><Button variant="ghost" size="sm" className="ml-auto" onClick={() => void share()}><Copy className="mr-1 h-4 w-4" />Copy link</Button></div></div>}
   </main></AppLayout>
 }

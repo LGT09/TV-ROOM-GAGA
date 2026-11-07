@@ -4,6 +4,7 @@ import { ProviderError } from "@/lib/providers/http"
 import { allowedMediaUrl } from "@/lib/providers/media-url"
 import { seal, unseal } from "@/lib/library/tokens"
 import { movieLocalMediaPath, movieResourcePayload, movieSourceCandidates } from "@/lib/providers/moviebox-resources"
+import { kamranMovieDownloads, safeKamranDownloadPage } from "@/lib/providers/kamran-movies"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
@@ -101,6 +102,13 @@ export async function GET(request: Request) {
       const page = Math.max(1, Math.min(1000, Number(params.get("page")) || 1))
       return NextResponse.json(await movieSearch(query, page), { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=30" } })
     }
+    if (action === "download-page") {
+      const token = params.get("pageKey") || ""
+      const page = unseal<{ url: string }>(token, "kamran-download-page")
+      const url = safeKamranDownloadPage(page?.url)
+      if (!url) throw new ProviderError("This download page is not supported.", 400)
+      return NextResponse.redirect(new URL(url), { status: 302, headers: { "Cache-Control": "no-store" } })
+    }
     const subjectId = params.get("subjectId") || ""
     if (!/^\d{5,32}$/.test(subjectId)) throw new ProviderError("Invalid movie title ID.", 400)
     if (action === "detail") {
@@ -109,6 +117,32 @@ export async function GET(request: Request) {
         try {
           const resource = unseal<any>(resourceToken, "movie-resource")
           if (String(resource.subjectId) !== subjectId) throw new ProviderError("Movie source does not match this title.", 400)
+          if (resource.provider === "kamran-sinhalasub") {
+            const pages = await kamranMovieDownloads(String(resource.sourceUrl || ""))
+            const downloadPages = pages.map(page => ({
+              quality: page.quality,
+              size: page.size,
+              url: `/api/moviebox?action=download-page&pageKey=${encodeURIComponent(seal("kamran-download-page", { url: page.url }, 900))}`,
+            }))
+            const subject = {
+              subjectId,
+              title: String(resource.title || "Movie"),
+              cover: String(resource.cover || ""),
+              genre: String(resource.genre || ""),
+              description: String(resource.description || ""),
+              releaseDate: String(resource.releaseDate || ""),
+              imdbRatingValue: resource.imdbRatingValue || "",
+              detailPath: String(resource.detailPath || ""),
+            }
+            return NextResponse.json({
+              success: true,
+              subject,
+              sources: [],
+              downloadPages,
+              proxySubtitles: [],
+              message: downloadPages.length ? "" : "No download pages are available for this title.",
+            }, { headers: { "Cache-Control": "private, no-store" } })
+          }
           const proxyStream = movieLocalMediaPath(String(resource.proxyStream || ""))
           const proxyDownload = movieLocalMediaPath(String(resource.proxyDownload || ""), true)
           if (proxyStream || proxyDownload) {

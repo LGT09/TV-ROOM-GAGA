@@ -4,6 +4,7 @@ import { BROWSER_USER_AGENT, ProviderError, providerJson } from "./http"
 import { allowedMediaUrl } from "./media-url"
 import { seal } from "@/lib/library/tokens"
 import { mergeMovieResourceResponses, movieLocalMediaPath, movieResourcePayload, movieSearchResponses, movieSourceCandidates } from "./moviebox-resources"
+import { searchKamranSinhalasub } from "./kamran-movies"
 
 const API = "https://api.omegatech.app/api/movie/MovieBox-pro"
 const BACKUP = "https://moviebox-api-eight.vercel.app"
@@ -66,20 +67,20 @@ export async function movieSearch(query: string, page: number) {
   const settled = await Promise.allSettled([
     movieBoxJson({ action: "search", keyword: query, page: String(page) }, 5500),
     providerJson(backupUrl.href, 5500),
+    searchKamranSinhalasub(query, page),
   ])
-  const successful = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
-  if (!successful.length) {
+  const successful = settled.slice(0, 2).flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+  const kamran = settled[2].status === "fulfilled" ? settled[2].value : null
+  if (!successful.length && !kamran) {
     const firstError = settled.find(result => result.status === "rejected")
     throw firstError?.status === "rejected" ? firstError.reason : new ProviderError("Movie search is temporarily unavailable.")
   }
   const { payloads, items, payload } = movieSearchResponses(successful)
   const pager = payload?.pager || payload?.pagination || {}
   const totalCount = Number(pager.totalCount || payload?.total) || undefined
-  const hasMoreFromAny = payloads.some(value => Boolean(value?.pager?.hasMore ?? value?.pagination?.hasMore ?? value?.hasMore))
+  const hasMoreFromAny = payloads.some(value => Boolean(value?.pager?.hasMore ?? value?.pagination?.hasMore ?? value?.hasMore)) || Boolean(kamran?.hasMore)
   const hasMore = hasMoreFromAny || Boolean(pager.hasMore ?? payload?.hasMore ?? (totalCount ? page * 20 < totalCount : false))
-  const value = {
-    success: true,
-    results: items.map((item: any) => {
+  const movieboxResults = items.map((item: any) => {
       const subjectId = String(item.subjectId || item.subject_id || item.id || "")
       const title = String(item.title || item.name || "Untitled")
       const proxyStream = safeSource(item, title)
@@ -106,9 +107,29 @@ export async function movieSearch(query: string, page: number) {
         ? seal("movie-resource", movie, 1800)
         : ""
       return { ...movie, resourceKey }
-    }).filter((item: any) => /^\d{5,32}$/.test(item.subjectId)),
+    }).filter((item: any) => /^\d{5,32}$/.test(item.subjectId))
+  const titleKey = (item: any) => {
+    const title = String(item.title || item.name || "").toLowerCase()
+      .replace(/sinhala subtitles?.*$/i, "")
+      .replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+    const year = String(item.releaseDate || item.release_date || item.year || title.match(/\b(?:19|20)\d{2}\b/)?.[0] || "").match(/\b(?:19|20)\d{2}\b/)?.[0] || ""
+    return `${title.replace(/\b(?:19|20)\d{2}\b/g, "").trim()}:${year}`
+  }
+  const seenTitles = new Set(movieboxResults.map(titleKey))
+  const kamranResults = (kamran?.items || []).flatMap((item: any) => {
+    const key = titleKey(item)
+    if (seenTitles.has(key)) return []
+    seenTitles.add(key)
+    const { sourceUrl, ...publicMovie } = item
+    const movie = { ...publicMovie, detailPath: "" }
+    const resourceKey = seal("movie-resource", { ...item, provider: "kamran-sinhalasub", sourceUrl }, 86400)
+    return [{ ...movie, resourceKey }]
+  })
+  const value = {
+    success: true,
+    results: [...movieboxResults, ...kamranResults],
     page: Number(pager.page || payload?.page) || page,
-    nextPage: Number(pager.nextPage || payload?.nextPage) || (hasMore ? page + 1 : null),
+    nextPage: Number(pager.nextPage || payload?.nextPage || kamran?.nextPage) || (hasMore ? page + 1 : null),
     hasMore,
     totalCount,
   }

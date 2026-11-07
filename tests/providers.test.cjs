@@ -18,6 +18,7 @@ const { normalizeProvider } = load("lib/providers/normalize.ts")
 const { parseM3u } = load("lib/providers/iptv.ts")
 const { allowedMediaUrl } = load("lib/providers/media-url.ts")
 const { movieResourcePayload, movieSourceCandidates, movieSearchResponses, mergeMovieResourceResponses } = load("lib/providers/moviebox-resources.ts")
+const { safeKamranTitleUrl, safeKamranDownloadPage, kamranSubjectId, normalizedKamranSearchRows, kamranDownloadPages } = load("lib/providers/kamran-movies.ts")
 const { providers } = load("lib/providers/registry.ts")
 const { runProvider } = load("lib/providers/service.ts")
 
@@ -115,6 +116,35 @@ test("MovieBox search and resource fallbacks merge both default API responses wi
   assert.equal(payload.qualities.length, 2)
   assert.deepEqual(movieSourceCandidates(payload.qualities[0], "stream"), ["https://cacdn.hakunaymatata.com/film.mp4"])
   assert.deepEqual(movieSourceCandidates(payload.qualities[1], "stream"), ["https://cdn.aoneroom.com/film-1080.mp4"])
+})
+test("Kamran SinhalaSub search creates safe hidden-source movie entries", () => {
+  const rows = normalizedKamranSearchRows({ results: [
+    { title: "Movie Language", type: "Movie", url: "https://sinhalasub.lk/language/" },
+    { title: "Avatar (2009) Sinhala Subtitles", type: "Movie", url: "https://sinhalasub.lk/movies/avatar-2009-sinhala-subtitles/", poster: "https://image.tmdb.org/t/p/poster.jpg" },
+    { title: "Bad host", type: "Movie", url: "https://evil.example/movies/bad/" },
+  ] })
+  assert.equal(rows.length, 1)
+  assert.match(rows[0].subjectId, /^\d{19}$/)
+  assert.equal(rows[0].subjectId, kamranSubjectId(rows[0].sourceUrl))
+  assert.equal(rows[0].title, "Avatar (2009) Sinhala Subtitles")
+  assert.equal(safeKamranTitleUrl("https://sinhalasub.lk/movies/avatar-2009-sinhala-subtitles/"), "https://sinhalasub.lk/movies/avatar-2009-sinhala-subtitles/")
+  assert.equal(safeKamranTitleUrl("http://sinhalasub.lk/movies/avatar/"), "")
+  assert.equal(safeKamranTitleUrl("https://sinhalasub.lk/links/abc123/"), "")
+})
+test("Kamran download responses keep link pages separate from playable media", () => {
+  const pages = kamranDownloadPages([
+    { downloads: [
+      { quality: "1080p", size: "2 GB", url: "https://sinhalasub.lk/links/file1080/" },
+      { quality: "720p", size: "1 GB", url: "https://sinhalasub.lk/links/file720/" },
+      { quality: "Movie page", url: "https://sinhalasub.lk/movies/avatar/" },
+      { quality: "Unsafe", url: "https://evil.example/links/file/" },
+    ] },
+    { data: { downloads: [{ quality: "1080p", size: "2 GB", url: "https://sinhalasub.lk/links/file1080/" }] } },
+  ])
+  assert.equal(pages.length, 2)
+  assert.equal(pages[0].quality, "1080p")
+  assert.equal(safeKamranDownloadPage(pages[0].url), pages[0].url)
+  assert.equal(safeKamranDownloadPage("https://sinhalasub.lk/movies/avatar/"), "")
 })
 test("provider routing validates unknown provider, slug paths and query inputs", async () => {
   await assert.rejects(runProvider("not-real", "home", new URLSearchParams()), /Unknown provider/)
