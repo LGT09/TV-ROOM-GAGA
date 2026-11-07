@@ -3,7 +3,7 @@ import "server-only"
 import { BROWSER_USER_AGENT, ProviderError, providerJson } from "./http"
 import { allowedMediaUrl } from "./media-url"
 import { seal } from "@/lib/library/tokens"
-import { movieLocalMediaPath, movieResourcePayload, movieSourceCandidates } from "./moviebox-resources"
+import { mergeMovieResourceResponses, movieLocalMediaPath, movieResourcePayload, movieSearchResponses, movieSourceCandidates } from "./moviebox-resources"
 
 const API = "https://api.omegatech.app/api/movie/MovieBox-pro"
 const BACKUP = "https://moviebox-api-eight.vercel.app"
@@ -61,26 +61,22 @@ export async function movieSearch(query: string, page: number) {
   const key = `${query.toLowerCase()}\n${page}`
   const cached = searchCache.get(key)
   if (cached && cached.expires > Date.now()) return cached.value
-  let raw: any
-  let primaryError: unknown
-  try { raw = await movieBoxJson({ action: "search", keyword: query, page: String(page) }) }
-  catch (error) { primaryError = error }
-  let payload = raw?.data?.data || raw?.data || raw
-  let items = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
-  if (!items.length) {
-    try {
-      const url = new URL(`${BACKUP}/search`)
-      url.search = new URLSearchParams({ q: query, page: String(page) }).toString()
-      raw = await providerJson(url.href, 12000)
-      payload = raw?.data?.data || raw?.data || raw
-      items = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
-    } catch {
-      if (primaryError) throw primaryError
-    }
+  const backupUrl = new URL(`${BACKUP}/search`)
+  backupUrl.search = new URLSearchParams({ q: query, page: String(page) }).toString()
+  const settled = await Promise.allSettled([
+    movieBoxJson({ action: "search", keyword: query, page: String(page) }, 5500),
+    providerJson(backupUrl.href, 5500),
+  ])
+  const successful = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+  if (!successful.length) {
+    const firstError = settled.find(result => result.status === "rejected")
+    throw firstError?.status === "rejected" ? firstError.reason : new ProviderError("Movie search is temporarily unavailable.")
   }
+  const { payloads, items, payload } = movieSearchResponses(successful)
   const pager = payload?.pager || payload?.pagination || {}
   const totalCount = Number(pager.totalCount || payload?.total) || undefined
-  const hasMore = Boolean(pager.hasMore ?? payload?.hasMore ?? (totalCount ? page * 20 < totalCount : false))
+  const hasMoreFromAny = payloads.some(value => Boolean(value?.pager?.hasMore ?? value?.pagination?.hasMore ?? value?.hasMore))
+  const hasMore = hasMoreFromAny || Boolean(pager.hasMore ?? payload?.hasMore ?? (totalCount ? page * 20 < totalCount : false))
   const value = {
     success: true,
     results: items.map((item: any) => {
@@ -146,23 +142,17 @@ export async function movieDetail(subjectId: string) {
 }
 
 export async function movieResourceResponse(subjectId: string, detailPath: string, season = "0", episode = "0") {
-  let primary: any
-  try { primary = await movieBoxJson({ action: "download", subjectId, detailPath, se: season, ep: episode }, 18000) }
-  catch (error) {
-    try {
-      const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
-      return await providerJson(`${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`, 12000)
-    } catch { throw error }
+  const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
+  const backupUrl = `${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`
+  const settled = await Promise.allSettled([
+    movieBoxJson({ action: "download", subjectId, detailPath, se: season, ep: episode }, 7500),
+    providerJson(backupUrl, 7500),
+  ])
+  const successful = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+  if (!successful.length) {
+    const firstError = settled.find(result => result.status === "rejected")
+    throw firstError?.status === "rejected" ? firstError.reason : new ProviderError("Movie sources are temporarily unavailable.")
   }
-  const payload = movieResourcePayload(primary, subjectId)
-  const sources = Array.isArray(payload?.qualities) ? payload.qualities
-    : Array.isArray(payload?.sources) ? payload.sources
-    : Array.isArray(payload?.availableStreams) ? payload.availableStreams
-    : Array.isArray(payload?.streams) ? payload.streams : []
-  if (sources.some((item: any) => movieSourceCandidates(item, "stream").length || movieSourceCandidates(item, "download").length) ||
-      movieSourceCandidates(payload, "stream").length || movieSourceCandidates(payload, "download").length) return primary
-  try {
-    const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
-    return await providerJson(`${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`, 12000)
-  } catch { return primary }
+
+  return mergeMovieResourceResponses(successful, subjectId)
 }

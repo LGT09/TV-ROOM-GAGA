@@ -8,7 +8,8 @@ function nestedUrls(value: unknown): string[] {
   return [
     "url", "proxyUrl", "streamUrl", "stream_url", "downloadUrl", "download_url",
     "directUrl", "direct_url", "videoUrl", "video_url", "fileUrl", "file_url",
-    "originalStreamUrl", "original_stream_url", "playUrl", "play_url",
+    "originalStreamUrl", "original_stream_url", "originalDownloadUrl", "original_download_url",
+    "playUrl", "play_url",
     "bestQualityUrl", "best_quality_url", "hls", "dash", "src",
   ].flatMap(key => nestedUrls(record[key]))
 }
@@ -36,7 +37,7 @@ export function movieResourcePayload(raw: any, subjectId?: string) {
       const items = container[key]
       if (!Array.isArray(items)) continue
       const item = subjectId
-        ? items.find((candidate: any) => String(candidate?.subjectId || candidate?.id || "") === subjectId)
+        ? items.find((candidate: any) => String(candidate?.subjectId || candidate?.subject_id || candidate?.id || "") === subjectId)
         : items[0]
       if (item && (item.qualities?.length || item.sources?.length ||
           item.availableStreams?.length || item.streams?.length ||
@@ -47,13 +48,70 @@ export function movieResourcePayload(raw: any, subjectId?: string) {
   return containers[0] || raw || {}
 }
 
+export function movieSearchResponses(rawResponses: any[]) {
+  const payloads = rawResponses.map(raw => {
+    const candidates = [raw?.data?.data, raw?.data, raw?.result, raw]
+    return candidates.find(value => Array.isArray(value?.results) || Array.isArray(value?.items)) || raw
+  })
+  const itemsById = new Map<string, any>()
+  for (const payload of payloads) {
+    const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
+    for (const item of rows) {
+      const id = String(item?.subjectId || item?.subject_id || item?.id || "")
+      if (!id) continue
+      const existing = itemsById.get(id) || {}
+      itemsById.set(id, {
+        ...existing,
+        ...item,
+        cover: item.cover || existing.cover,
+        poster: item.poster || existing.poster,
+        detailPath: item.detailPath || item.detail_path || item.slug || existing.detailPath,
+      })
+    }
+  }
+  return {
+    payloads,
+    items: [...itemsById.values()],
+    payload: payloads.find(value => Array.isArray(value?.results) || Array.isArray(value?.items)) || payloads[0] || {},
+  }
+}
+
+export function mergeMovieResourceResponses(rawResponses: any[], subjectId: string) {
+  const records: any[] = []
+  const subtitles: any[] = []
+  const seen = new Set<string>()
+  for (const raw of rawResponses) {
+    const payload = movieResourcePayload(raw, subjectId)
+    for (const key of ["qualities", "sources", "availableStreams", "streams"]) {
+      if (Array.isArray(payload?.[key])) records.push(...payload[key])
+    }
+    if (movieSourceCandidates(payload, "stream").length || movieSourceCandidates(payload, "download").length) records.push(payload)
+    const captions = payload?.proxySubtitles || payload?.subtitles || []
+    if (Array.isArray(captions)) subtitles.push(...captions)
+    else if (captions && typeof captions === "object") subtitles.push(...Object.values(captions))
+  }
+  const sources = records.filter(record => {
+    const key = JSON.stringify({
+      stream: movieSourceCandidates(record, "stream"),
+      download: movieSourceCandidates(record, "download"),
+      quality: record?.quality || record?.resolution || "",
+    })
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return sources.length
+    ? { qualities: sources, subtitles, proxySubtitles: subtitles }
+    : rawResponses[0] || {}
+}
+
 export function movieSourceCandidates(item: any, kind: SourceKind): string[] {
   const keys = kind === "stream"
-    ? ["proxyStream", "directUrl", "directStreamUrl", "streamUrl", "playUrl", "videoUrl", "url"]
-    : ["proxyDownload", "directDownloadUrl", "directUrl", "downloadUrl", "fileUrl", "url", "streamUrl"]
+    ? ["originalStreamUrl", "original_stream_url", "directStreamUrl", "directUrl", "streamUrl", "stream_url", "proxyStream", "playUrl", "play_url", "videoUrl", "video_url", "url"]
+    : ["originalDownloadUrl", "original_download_url", "directDownloadUrl", "directUrl", "downloadUrl", "download_url", "fileUrl", "file_url", "proxyDownload", "url", "originalStreamUrl", "streamUrl"]
   const allKeys = kind === "stream"
-    ? [...keys, "bestQualityUrl", "best_quality_url", "stream_url", "direct_url", "video_url", "originalStreamUrl", "original_stream_url", "hls", "dash"]
-    : [...keys, "bestQualityUrl", "best_quality_url", "download_url", "direct_url", "file_url", "originalStreamUrl", "original_stream_url"]
+    ? [...keys, "bestQualityUrl", "best_quality_url", "direct_url", "hls", "dash"]
+    : [...keys, "bestQualityUrl", "best_quality_url", "direct_url"]
   return [...new Set(allKeys.flatMap(key => nestedUrls(item?.[key])).filter(value => /^https?:\/\//i.test(value) || /^\/api\/media(?:\?|$)/.test(value)))]
 }
 

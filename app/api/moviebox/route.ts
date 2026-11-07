@@ -80,12 +80,14 @@ function resourceSources(data: any, subject: any) {
       proxyDownload,
     }] : []
   })
+  const uniqueSources = sources.filter((source: any, index: number) =>
+    sources.findIndex((other: any) => other.proxyStream === source.proxyStream && other.proxyDownload === source.proxyDownload && other.quality === source.quality) === index)
   return {
-    sources,
-    proxyStream: sources[0]?.proxyStream || "",
-    proxyDownload: sources[0]?.proxyDownload || "",
+    sources: uniqueSources,
+    proxyStream: uniqueSources[0]?.proxyStream || "",
+    proxyDownload: uniqueSources[0]?.proxyDownload || "",
     proxySubtitles: subtitlesOf(data?.proxySubtitles || data?.subtitles || subject?.proxySubtitles || [], title),
-    message: sources.length ? "" : "No playable movie file is available for this title right now.",
+    message: uniqueSources.length ? "" : "No playable movie file is available for this title right now.",
   }
 }
 

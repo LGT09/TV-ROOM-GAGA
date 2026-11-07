@@ -17,7 +17,7 @@ function load(file) {
 const { normalizeProvider } = load("lib/providers/normalize.ts")
 const { parseM3u } = load("lib/providers/iptv.ts")
 const { allowedMediaUrl } = load("lib/providers/media-url.ts")
-const { movieResourcePayload, movieSourceCandidates } = load("lib/providers/moviebox-resources.ts")
+const { movieResourcePayload, movieSourceCandidates, movieSearchResponses, mergeMovieResourceResponses } = load("lib/providers/moviebox-resources.ts")
 const { providers } = load("lib/providers/registry.ts")
 const { runProvider } = load("lib/providers/service.ts")
 
@@ -77,7 +77,11 @@ test("MovieBox resource URLs are read from direct or nested results with separat
   assert.deepEqual(movieSourceCandidates(item, "download"), [direct, proxy])
   const nested = movieResourcePayload({ qualities: [], availableStreams: [], data: { results: [{ subjectId: "other", proxyStream: "https://cdn.example/wrong.mp4" }, { ...item, proxyStream: proxy }] } }, item.subjectId)
   assert.equal(nested.subjectId, item.subjectId)
-  assert.deepEqual(movieSourceCandidates(nested, "stream"), [proxy, direct])
+  assert.deepEqual(movieSourceCandidates(nested, "stream"), [direct, proxy])
+  const original = "https://cacdn.hakunaymatata.com/movie/original.mp4"
+  const gateway = "https://stream.omegatech.app/info?id=123"
+  assert.deepEqual(movieSourceCandidates({ streamUrl: gateway, originalStreamUrl: original }, "stream"), [original, gateway])
+  assert.deepEqual(movieSourceCandidates({ downloadUrl: gateway, originalDownloadUrl: original }, "download"), [original, gateway])
   assert.deepEqual(movieSourceCandidates({ bestQualityUrl: direct }, "stream"), [direct])
   assert.deepEqual(movieSourceCandidates({ proxyStream: "/api/media?key=signed" }, "stream"), ["/api/media?key=signed"])
   assert.equal(load("lib/providers/moviebox-resources.ts").movieLocalMediaPath("/api/media?key=signed", true), "/api/media?key=signed&download=1")
@@ -95,6 +99,22 @@ test("MovieBox stream API response format preserves playable and downloadable st
   assert.equal(payload.streams.length, 1)
   assert.deepEqual(movieSourceCandidates(payload.streams[0], "stream"), [streamUrl])
   assert.deepEqual(movieSourceCandidates(payload.streams[0], "download"), [downloadUrl, streamUrl])
+})
+test("MovieBox search and resource fallbacks merge both default API responses without duplicate titles or URLs", () => {
+  const search = movieSearchResponses([
+    { data: { results: [{ subjectId: "1234567890", title: "Film", cover: { url: "https://cdn.example/poster.jpg" }, detailPath: "film-one" }] } },
+    { results: [{ subject_id: "1234567890", name: "Film", proxyDownload: "https://cacdn.hakunaymatata.com/film.mp4" }, { id: "9876543210", title: "Other Film" }] },
+  ])
+  assert.equal(search.items.length, 2)
+  assert.equal(search.items[0].detailPath, "film-one")
+  const merged = mergeMovieResourceResponses([
+    { data: { streams: [{ url: "https://cacdn.hakunaymatata.com/film.mp4", quality: "720p" }] } },
+    { sources: [{ url: "https://cdn.aoneroom.com/film-1080.mp4", quality: "1080p" }] },
+  ], "1234567890")
+  const payload = movieResourcePayload(merged, "1234567890")
+  assert.equal(payload.qualities.length, 2)
+  assert.deepEqual(movieSourceCandidates(payload.qualities[0], "stream"), ["https://cacdn.hakunaymatata.com/film.mp4"])
+  assert.deepEqual(movieSourceCandidates(payload.qualities[1], "stream"), ["https://cdn.aoneroom.com/film-1080.mp4"])
 })
 test("provider routing validates unknown provider, slug paths and query inputs", async () => {
   await assert.rejects(runProvider("not-real", "home", new URLSearchParams()), /Unknown provider/)

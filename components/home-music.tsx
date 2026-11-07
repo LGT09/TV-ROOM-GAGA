@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { AlertCircle, ArrowUpRight, Disc3, Download, LoaderCircle, Music2, Pause, Play, RotateCcw, Search } from "lucide-react"
 import { SongDownload } from "@/components/song-download"
+import { MusicVideoButton } from "@/components/music-video-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -272,6 +273,7 @@ export function HomeMusic() {
                     <span className="text-[9px] text-muted-foreground">Full-length audio</span>
                     <div className="flex items-center gap-0.5">
                       <button type="button" onClick={() => void playTrack(track, true)} disabled={pendingPlay === key} className="rounded-md px-1.5 py-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50">Full song</button>
+                      <MusicVideoButton title={track.trackName} artist={track.artistName} videoId={track.videoId} compact />
                       <button type="button" onClick={() => void downloadTrack(track)} disabled={pendingDownload !== null} aria-label={`Download full song ${track.trackName}`} title="Download full song" className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50">
                         {pendingDownload === key ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                       </button>
@@ -294,6 +296,12 @@ export function HomeMusic() {
               <p className="mt-0.5 truncate text-xs font-semibold">{activeTrack?.trackName || "Pick a song to play"}</p>
               <p className="truncate text-[10px] text-muted-foreground">{activeTrack?.artistName || "Trending music, close at hand"}</p>
             </div>
+            {activeTrack && (
+              <MusicVideoButton title={activeTrack.trackName} artist={activeTrack.artistName} videoId={activeTrack.videoId} compact onOpen={() => {
+                audioRef.current?.pause()
+                setIsPlaying(false)
+              }} />
+            )}
             {activeTrack && (
               <Button variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-full" onClick={() => {
                 const audio = audioRef.current

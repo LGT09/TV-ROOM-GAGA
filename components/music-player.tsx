@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
+import { MusicVideoButton } from "@/components/music-video-button"
 import type { ContentItem } from "@/lib/types"
 
 interface MusicPlayerProps {
@@ -327,6 +328,13 @@ export function MusicPlayer({ currentTrack, playlist, onTrackChange }: MusicPlay
                 <Repeat className="h-4 w-4" />
                 {repeatMode === "one" && <span className="absolute text-[10px] font-bold">1</span>}
               </Button>
+              <MusicVideoButton
+                title={currentTrack.title}
+                artist={currentTrack.artist}
+                videoUrl={currentTrack.videoUrl}
+                onOpen={() => audioRef.current?.pause()}
+                compact
+              />
             </div>
 
             {/* Volume Controls */}
