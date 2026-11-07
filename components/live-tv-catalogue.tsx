@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertCircle, Globe2, Radio, RotateCw, Search, Tv, Share2 } from "lucide-react"
 import { AppLayout } from "@/components/app-layout"
 import { MediaPlayback } from "@/components/media-playback"
+import { MediaWatermark } from "@/components/media-watermark"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { countryInfo } from "@/lib/countries"
 
-type Channel = { id:string; name:string; category?:string; categories?:string[]; country?:string; logo?:string; streamUrl?:string; streams?:{url:string;quality?:string}[]; hasStream?:boolean }
+type Channel = { id:string; name:string; category?:string; categories?:string[]; country?:string; logo?:string; streamUrl?:string; officialUrl?:string; streams?:{url:string;quality?:string}[]; hasStream?:boolean }
 type Health={id:string;active:boolean;latencyMs:number;checkedAt:number}
 export function LiveTvCatalogue() {
   const [channels,setChannels]=useState<Channel[]>([])
@@ -20,6 +21,7 @@ export function LiveTvCatalogue() {
   const [submittedQuery,setSubmittedQuery]=useState("")
   const [selected,setSelected]=useState<Channel|null>(null)
   const [stream,setStream]=useState("")
+  const [officialUrl,setOfficialUrl]=useState("")
   const [alternates,setAlternates]=useState<{url:string;quality?:string}[]>([])
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState("")
@@ -41,8 +43,9 @@ export function LiveTvCatalogue() {
     setChecking(true);setChecked(0);setError("")
     let next=0
     const worker=async()=>{
-      while(next<channels.length&&!controller.signal.aborted){
-        const batch=channels.slice(next,next+6);next+=6
+      const probeable=channels.filter(channel=>channel.hasStream!==false)
+      while(next<probeable.length&&!controller.signal.aborted){
+        const batch=probeable.slice(next,next+6);next+=6
         const response=await fetch(`/api/live-tv?action=ping&ids=${encodeURIComponent(batch.map(c=>c.id).join(","))}`,{signal:controller.signal,cache:"no-store"})
         const data=await response.json()
         if(!response.ok)throw new Error(data.error||"Could not check channels.")
@@ -77,10 +80,11 @@ export function LiveTvCatalogue() {
     channelRequest.current?.abort()
     const controller=new AbortController()
     channelRequest.current=controller
-    setSelected(channel);setStream("");setAlternates([]);setError("");setSelecting(true)
+    setSelected(channel);setStream("");setOfficialUrl("");setAlternates([]);setError("");setSelecting(true)
     try {
       const res=await fetch(`/api/live-tv?action=stream&channelId=${encodeURIComponent(channel.id)}`,{cache:"no-store",signal:controller.signal});const data=await res.json()
       if(!res.ok||data.success===false)throw new Error(data.error||"No stream was returned for this channel.")
+      if(data.officialUrl){setOfficialUrl(data.officialUrl);return}
       const urls=(data.channel?.streams||channel.streams||[]).filter((s:any)=>s.url)
       const primary=data.streamUrl||data.channel?.streamUrl||urls[0]?.url||channel.streamUrl||""
       if(!primary)throw new Error("This channel does not currently provide a stream URL.")
@@ -107,7 +111,17 @@ export function LiveTvCatalogue() {
     <div className="grid lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,1fr)] gap-4 items-start">
       <section className="space-y-4">
         <div className="glass-card rounded-3xl p-3 md:p-4">
-          {selected&&stream?<MediaPlayback key={stream} src={stream} title={selected.name} alternateSources={alternates}/>:<div className="aspect-video rounded-2xl bg-[#171c28] text-white/70 grid place-items-center text-center p-8">
+          {selected&&stream?<MediaPlayback key={stream} src={stream} title={selected.name} alternateSources={alternates}/>:selected&&officialUrl?<div className="relative aspect-video overflow-hidden rounded-2xl bg-[#111722]">
+            <iframe
+              key={officialUrl}
+              src={officialUrl}
+              title={`${selected.name} official broadcast`}
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+              referrerPolicy="strict-origin-when-cross-origin"
+              className="h-full w-full border-0"
+            />
+            <MediaWatermark />
+          </div>:<div className="aspect-video rounded-2xl bg-[#171c28] text-white/70 grid place-items-center text-center p-8">
             <div><Tv className="h-10 w-10 mx-auto text-primary/80"/><p className="mt-3 font-display text-xl text-white">{selected?.name||"Choose a channel"}</p><p role="status" className="mt-2 text-sm">{selecting?"Opening channel…":selected?"No playable stream yet. Retry below or select another channel.":"Choose a country and a channel below."}</p></div>
           </div>}
           {selected&&<div className="mt-4 flex items-center gap-3">

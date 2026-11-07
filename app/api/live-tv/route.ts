@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getChannels } from "@/lib/providers/iptv"
+import { getChannels, zimbabweBroadcasts } from "@/lib/providers/iptv"
 import { integer } from "@/lib/providers/http"
 import { countryInfo } from "@/lib/countries"
 import { seal } from "@/lib/library/tokens"
@@ -12,13 +12,22 @@ export async function GET(request: Request) {
   const p = new URL(request.url).searchParams
   const action = p.get("action") || p.get("path") || "channels"
   try {
+    if (action === "stream") {
+      const officialChannel = zimbabweBroadcasts.find(channel => channel.id === p.get("channelId"))
+      if (officialChannel) return NextResponse.json({
+        success: true,
+        channel: officialChannel,
+        officialUrl: officialChannel.officialUrl,
+        note: "This broadcaster provides its official watch page for playback.",
+      }, { headers: { "Cache-Control": "private, no-store" } })
+    }
     const { channels, source, warnings } = await getChannels()
     if(action==="ping"){
       const ids=[...new Set((p.get("ids")||p.get("channelId")||"").split(",").filter(Boolean))]
       if(!ids.length||ids.length>6)return NextResponse.json({success:false,error:"Check between one and six catalogue channels at a time."},{status:400})
       if(healthBatches>=2)return NextResponse.json({success:false,error:"Channel checks are busy. Please retry shortly."},{status:429,headers:{"Retry-After":"3"}})
       const selected=ids.map(id=>channels.find(channel=>channel.id===id))
-      if(selected.some(channel=>!channel))return NextResponse.json({success:false,error:"Channel not found."},{status:404})
+      if(selected.some(channel=>!channel||channel.hasStream===false))return NextResponse.json({success:false,error:"One or more selected channels do not publish a probeable stream."},{status:404})
       healthBatches++
       try{
         const results=await Promise.all(selected.map(channel=>checkChannel(channel!)))

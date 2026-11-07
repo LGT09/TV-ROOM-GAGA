@@ -4,6 +4,7 @@ import { providerJson, webUrl } from "./http"
 export interface Channel {
   id: string; name: string; category: string; categories: string[]; country: string
   logo: string; streamUrl: string; streams: { url: string; quality: string }[]; hasStream: boolean
+  officialUrl?: string
 }
 interface Catalogue { channels: Channel[]; source: string; warnings: string[] }
 let cache: { expires: number; data: Catalogue } | undefined
@@ -11,6 +12,45 @@ let pending: Promise<Catalogue> | undefined
 const OMEGA = "https://api.omegatech.app/api/movie/Iptv"
 const list = (data: any): any[] => Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.results) ? data.results : []
 const secureStream = (value: unknown) => { const url = webUrl(value); return url.startsWith("https://") ? url : "" }
+
+export const zimbabweBroadcasts: Channel[] = [
+  {
+    id: "zbc-watch-9",
+    name: "ZBC TV",
+    category: "Zimbabwe",
+    categories: ["Zimbabwe", "Public broadcast"],
+    country: "ZW",
+    logo: "",
+    streamUrl: "",
+    streams: [],
+    hasStream: false,
+    officialUrl: "https://zbc.ottplatform.com/watch/9",
+  },
+  {
+    id: "zbc-watch-51",
+    name: "ZBC Music",
+    category: "Zimbabwe",
+    categories: ["Zimbabwe", "Music"],
+    country: "ZW",
+    logo: "",
+    streamUrl: "",
+    streams: [],
+    hasStream: false,
+    officialUrl: "https://zbc.ottplatform.com/watch/51",
+  },
+  {
+    id: "zbc-watch-26",
+    name: "ZBC News",
+    category: "Zimbabwe",
+    categories: ["Zimbabwe", "News"],
+    country: "ZW",
+    logo: "",
+    streamUrl: "",
+    streams: [],
+    hasStream: false,
+    officialUrl: "https://zbc.ottplatform.com/watch/26",
+  },
+]
 
 export function parseM3u(text: string): Channel[] {
   const results: Channel[] = []
@@ -81,6 +121,7 @@ export async function getChannels(): Promise<Catalogue> {
         } else map.set(c.id, c)
       }
     } else warnings.push("One TV directory is unavailable. An alternate channel directory is in use.")
+    for (const channel of zimbabweBroadcasts) map.set(channel.id, channel)
     const channels = [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
     if (!channels.length) throw new Error("Both live TV directories are unavailable. Please retry later.")
     const data = { channels, source: [omega.status === "fulfilled" ? "OmegaTech IPTV" : "", m3u.status === "fulfilled" ? "iptv-org" : ""].filter(Boolean).join(" + "), warnings }

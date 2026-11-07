@@ -8,6 +8,7 @@ import { searchKamranSinhalasub } from "./kamran-movies"
 
 const API = "https://api.omegatech.app/api/movie/MovieBox-pro"
 const BACKUP = "https://moviebox-api-eight.vercel.app"
+const MOVIEBOX_API = "https://movieboxapi.vercel.app/api"
 const METADATA = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
 const metadataHeaders = { Origin: "https://moviebox.ph", Referer: "https://moviebox.ph/" }
 const searchCache = new Map<string, { expires: number; value: unknown }>()
@@ -64,13 +65,21 @@ export async function movieSearch(query: string, page: number) {
   if (cached && cached.expires > Date.now()) return cached.value
   const backupUrl = new URL(`${BACKUP}/search`)
   backupUrl.search = new URLSearchParams({ q: query, page: String(page) }).toString()
+  const movieboxApiSearch = new URL(`${MOVIEBOX_API}/search`)
+  movieboxApiSearch.search = new URLSearchParams({
+    query,
+    subjectType: "MOVIES",
+    page: String(page),
+    perPage: "20",
+  }).toString()
   const settled = await Promise.allSettled([
     movieBoxJson({ action: "search", keyword: query, page: String(page) }, 5500),
     providerJson(backupUrl.href, 5500),
+    providerJson(movieboxApiSearch.href, 7000),
     searchKamranSinhalasub(query, page),
   ])
-  const successful = settled.slice(0, 2).flatMap(result => result.status === "fulfilled" ? [result.value] : [])
-  const kamran = settled[2].status === "fulfilled" ? settled[2].value : null
+  const successful = settled.slice(0, 3).flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+  const kamran = settled[3].status === "fulfilled" ? settled[3].value : null
   if (!successful.length && !kamran) {
     const firstError = settled.find(result => result.status === "rejected")
     throw firstError?.status === "rejected" ? firstError.reason : new ProviderError("Movie search is temporarily unavailable.")
@@ -165,9 +174,18 @@ export async function movieDetail(subjectId: string) {
 export async function movieResourceResponse(subjectId: string, detailPath: string, season = "0", episode = "0") {
   const query = new URLSearchParams({ se: season, ep: episode, detail_path: detailPath })
   const backupUrl = `${BACKUP}/api/stream/${encodeURIComponent(subjectId)}?${query}`
+  const movieboxApiStream = new URL(`${MOVIEBOX_API}/stream`)
+  movieboxApiStream.search = new URLSearchParams({
+    subjectId,
+    detailPath,
+    season,
+    episode,
+    quality: "720",
+  }).toString()
   const settled = await Promise.allSettled([
     movieBoxJson({ action: "download", subjectId, detailPath, se: season, ep: episode }, 7500),
     providerJson(backupUrl, 7500),
+    providerJson(movieboxApiStream.href, 10000),
   ])
   const successful = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
   if (!successful.length) {

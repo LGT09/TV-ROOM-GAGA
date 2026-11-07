@@ -116,13 +116,15 @@ Lyrics are fetched from LRCLIB using an identified application User-Agent, seria
 
 On Live TV, **Check channels** checks the current page, displays progress and response times, and supports stopping. **Active only** displays channels with recent successful checks. The server accepts catalogue IDs only, tests up to two listed streams for nonempty media/playlist data, caches checks for one minute, and limits batches to six channels. Requests reuse public-IP validation, DNS pinning and redirect checks. “Active” means the server received a media response, not guaranteed decoding, uninterrupted broadcast, or regional availability on the viewer's device. Unchecked entries are not labelled live.
 
+Zimbabwe's ZBC TV, ZBC Music and ZBC News entries play through their official watch pages embedded in the app. The pages do not expose direct media URLs to this app, so the broadcaster's own player handles playback and those channels are not marked as probeable direct streams.
+
 ## Ads
 
 The app does not load advertising scripts or display advertising popups.
 
 ## Movies, sport and sharing
 
-The movie search proxies the MovieBox-pro endpoint server-side, adapts its nested `data.items`/`pager` response, debounces searches, and signs allowed stream, download and caption URLs before exposing local app routes. Movie cards link to `/mv/{subjectId}`, where Open Graph metadata is generated from title details.
+The movie search queries MovieBox-pro, MovieBox API and the existing configured fallbacks server-side, merges duplicate titles, adapts nested results and pagination, and debounces searches. Stream/download lookups use the selected subject ID and detail path; allowed source URLs are signed before being exposed through local app routes. Movie cards link to `/mv/{subjectId}`, where Open Graph metadata is generated from title details.
 
 Sports uses the Omegatech Sport endpoint. The current upstream rejects `trend`, `feeds`, and `match-detail`; these are mapped to its working `aggregate`, `live`, and `stream` actions, respectively. Live HLS streams are signed and relayed with the required sports referer. Match links use `/sport/match/{taskid}`. Live TV links use `/live/{channel}`. TikTok share links use a short-lived encrypted task token at `/media/tiktok/{taskid}`; the source is resolved when opened and is not stored by this app.
 

@@ -74,7 +74,7 @@ function resourceSources(data: any, subject: any) {
     const proxyStream = resolve("stream")
     const proxyDownload = resolve("download")
     return proxyStream || proxyDownload ? [{
-      quality: String(item?.quality || item?.resolution || "Auto"),
+      quality: String(item?.quality || item?.resolution || item?.resolutions || "Auto"),
       format: String(item?.format || "MP4").toUpperCase(),
       size: item?.size || "",
       proxyStream,

@@ -15,7 +15,7 @@ function load(file) {
   return module.exports
 }
 const { normalizeProvider } = load("lib/providers/normalize.ts")
-const { parseM3u } = load("lib/providers/iptv.ts")
+const { parseM3u, zimbabweBroadcasts } = load("lib/providers/iptv.ts")
 const { allowedMediaUrl } = load("lib/providers/media-url.ts")
 const { movieResourcePayload, movieSourceCandidates, movieSearchResponses, mergeMovieResourceResponses } = load("lib/providers/moviebox-resources.ts")
 const { safeKamranTitleUrl, safeKamranDownloadPage, kamranSubjectId, normalizedKamranSearchRows, kamranDownloadPages } = load("lib/providers/kamran-movies.ts")
@@ -64,6 +64,14 @@ test("M3U parser associates attributes with HTTPS URLs, excluding mixed content"
   assert.equal(d[0].category, "news")
   assert.equal(d[0].streams[0].quality, "720p")
 })
+test("Zimbabwe broadcast pages are listed as official watch links, not fake direct streams", () => {
+  assert.deepEqual(zimbabweBroadcasts.map(channel => channel.officialUrl), [
+    "https://zbc.ottplatform.com/watch/9",
+    "https://zbc.ottplatform.com/watch/51",
+    "https://zbc.ottplatform.com/watch/26",
+  ])
+  assert.ok(zimbabweBroadcasts.every(channel => channel.country === "ZW" && !channel.hasStream && channel.streams.length === 0))
+})
 test("media proxies cannot fetch arbitrary URLs or credentials", () => {
   for (const url of ["http://127.0.0.1", "https://127.0.0.1", "https://example.com", "https://hakunaymatata.com.evil.example/file", "https://user:pass@cacdn.hakunaymatata.com/file", "https://cacdn.hakunaymatata.com:5000/test"]) assert.throws(() => allowedMediaUrl(url))
   assert.equal(allowedMediaUrl("https://cacdn.hakunaymatata.com/subtitle/test.srt").hostname, "cacdn.hakunaymatata.com")
@@ -101,6 +109,18 @@ test("MovieBox stream API response format preserves playable and downloadable st
   assert.deepEqual(movieSourceCandidates(payload.streams[0], "stream"), [streamUrl])
   assert.deepEqual(movieSourceCandidates(payload.streams[0], "download"), [downloadUrl, streamUrl])
 })
+test("MovieBox API nested stream payload preserves qualities and signed media URLs", () => {
+  const proxy = "https://proxy.cinemind.name.ng/api/proxy?url=https%3A%2F%2Fbcdnxw.hakunaymatata.com%2Ffilm.mp4"
+  const raw = {
+    status: "success",
+    data: { data: { streams: [{ format: "MP4", url: proxy, resolutions: "720", size: "2097433997" }] } },
+  }
+  const payload = movieResourcePayload(raw, "5390197429792821032")
+  assert.equal(payload.streams.length, 1)
+  assert.equal(movieSourceCandidates(payload.streams[0], "stream")[0], proxy)
+  assert.equal(movieSourceCandidates(payload.streams[0], "download")[0], proxy)
+  assert.equal(allowedMediaUrl(proxy).hostname, "proxy.cinemind.name.ng")
+})
 test("MovieBox search and resource fallbacks merge both default API responses without duplicate titles or URLs", () => {
   const search = movieSearchResponses([
     { data: { results: [{ subjectId: "1234567890", title: "Film", cover: { url: "https://cdn.example/poster.jpg" }, detailPath: "film-one" }] } },
@@ -116,6 +136,26 @@ test("MovieBox search and resource fallbacks merge both default API responses wi
   assert.equal(payload.qualities.length, 2)
   assert.deepEqual(movieSourceCandidates(payload.qualities[0], "stream"), ["https://cacdn.hakunaymatata.com/film.mp4"])
   assert.deepEqual(movieSourceCandidates(payload.qualities[1], "stream"), ["https://cdn.aoneroom.com/film-1080.mp4"])
+})
+test("MovieBox API search format merges subject IDs, detail paths, covers and pagination", () => {
+  const search = movieSearchResponses([{
+    status: "success",
+    data: {
+      pager: { hasMore: true, nextPage: "2", page: "1", perPage: 20, totalCount: 100 },
+      items: [{
+        subjectId: "5390197429792821032",
+        subjectType: 1,
+        title: "Titanic",
+        detailPath: "titanic-m7a9yt0abq6",
+        cover: { url: "https://pbcdnw.aoneroom.com/image/poster.jpg" },
+        genre: "Drama,Romance",
+      }],
+    },
+  }])
+  assert.equal(search.items[0].subjectId, "5390197429792821032")
+  assert.equal(search.items[0].detailPath, "titanic-m7a9yt0abq6")
+  assert.equal(search.items[0].cover.url, "https://pbcdnw.aoneroom.com/image/poster.jpg")
+  assert.equal(search.payload.pager.nextPage, "2")
 })
 test("Kamran SinhalaSub search creates safe hidden-source movie entries", () => {
   const rows = normalizedKamranSearchRows({ results: [
