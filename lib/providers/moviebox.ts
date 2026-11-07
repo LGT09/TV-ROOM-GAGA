@@ -157,7 +157,8 @@ export async function movieResourceResponse(subjectId: string, detailPath: strin
   const payload = movieResourcePayload(primary, subjectId)
   const sources = Array.isArray(payload?.qualities) ? payload.qualities
     : Array.isArray(payload?.sources) ? payload.sources
-    : Array.isArray(payload?.availableStreams) ? payload.availableStreams : []
+    : Array.isArray(payload?.availableStreams) ? payload.availableStreams
+    : Array.isArray(payload?.streams) ? payload.streams : []
   if (sources.some((item: any) => movieSourceCandidates(item, "stream").length || movieSourceCandidates(item, "download").length) ||
       movieSourceCandidates(payload, "stream").length || movieSourceCandidates(payload, "download").length) return primary
   try {

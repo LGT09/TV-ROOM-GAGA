@@ -82,6 +82,20 @@ test("MovieBox resource URLs are read from direct or nested results with separat
   assert.deepEqual(movieSourceCandidates({ proxyStream: "/api/media?key=signed" }, "stream"), ["/api/media?key=signed"])
   assert.equal(load("lib/providers/moviebox-resources.ts").movieLocalMediaPath("/api/media?key=signed", true), "/api/media?key=signed&download=1")
 })
+test("MovieBox stream API response format preserves playable and downloadable stream URLs", () => {
+  const streamUrl = "https://cacdn.hakunaymatata.com/video/film-1080.mp4"
+  const downloadUrl = "https://cacdn.hakunaymatata.com/download/film-1080.mp4"
+  const raw = {
+    success: true,
+    data: {
+      streams: [{ url: streamUrl, downloadUrl, quality: "1080p", format: "MP4", size: 734003200 }],
+    },
+  }
+  const payload = movieResourcePayload(raw, "8906247916759695608")
+  assert.equal(payload.streams.length, 1)
+  assert.deepEqual(movieSourceCandidates(payload.streams[0], "stream"), [streamUrl])
+  assert.deepEqual(movieSourceCandidates(payload.streams[0], "download"), [downloadUrl, streamUrl])
+})
 test("provider routing validates unknown provider, slug paths and query inputs", async () => {
   await assert.rejects(runProvider("not-real", "home", new URLSearchParams()), /Unknown provider/)
   await assert.rejects(runProvider("moviebox", "stream", new URLSearchParams({ id: "../private" })), /Invalid title ID/)

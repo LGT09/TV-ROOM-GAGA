@@ -8,7 +8,8 @@ function nestedUrls(value: unknown): string[] {
   return [
     "url", "proxyUrl", "streamUrl", "stream_url", "downloadUrl", "download_url",
     "directUrl", "direct_url", "videoUrl", "video_url", "fileUrl", "file_url",
-    "playUrl", "play_url", "bestQualityUrl", "best_quality_url", "hls", "dash", "src",
+    "originalStreamUrl", "original_stream_url", "playUrl", "play_url",
+    "bestQualityUrl", "best_quality_url", "hls", "dash", "src",
   ].flatMap(key => nestedUrls(record[key]))
 }
 
@@ -26,7 +27,8 @@ export function movieResourcePayload(raw: any, subjectId?: string) {
 
   for (const container of containers) {
     if (container.qualities?.length || container.sources?.length ||
-        container.availableStreams?.length || container.proxyStream || container.proxyDownload ||
+        container.availableStreams?.length || container.streams?.length ||
+        container.proxyStream || container.proxyDownload ||
         container.bestQualityUrl || container.best_quality_url || container.hls || container.dash) return container
   }
   for (const container of containers) {
@@ -37,6 +39,7 @@ export function movieResourcePayload(raw: any, subjectId?: string) {
         ? items.find((candidate: any) => String(candidate?.subjectId || candidate?.id || "") === subjectId)
         : items[0]
       if (item && (item.qualities?.length || item.sources?.length ||
+          item.availableStreams?.length || item.streams?.length ||
           item.proxyStream || item.proxyDownload || item.streamUrl || item.downloadUrl ||
           item.bestQualityUrl || item.best_quality_url || item.hls || item.dash)) return item
     }
@@ -49,8 +52,8 @@ export function movieSourceCandidates(item: any, kind: SourceKind): string[] {
     ? ["proxyStream", "directUrl", "directStreamUrl", "streamUrl", "playUrl", "videoUrl", "url"]
     : ["proxyDownload", "directDownloadUrl", "directUrl", "downloadUrl", "fileUrl", "url", "streamUrl"]
   const allKeys = kind === "stream"
-    ? [...keys, "bestQualityUrl", "best_quality_url", "stream_url", "direct_url", "video_url", "hls", "dash"]
-    : [...keys, "bestQualityUrl", "best_quality_url", "download_url", "direct_url", "file_url"]
+    ? [...keys, "bestQualityUrl", "best_quality_url", "stream_url", "direct_url", "video_url", "originalStreamUrl", "original_stream_url", "hls", "dash"]
+    : [...keys, "bestQualityUrl", "best_quality_url", "download_url", "direct_url", "file_url", "originalStreamUrl", "original_stream_url"]
   return [...new Set(allKeys.flatMap(key => nestedUrls(item?.[key])).filter(value => /^https?:\/\//i.test(value) || /^\/api\/media(?:\?|$)/.test(value)))]
 }
 

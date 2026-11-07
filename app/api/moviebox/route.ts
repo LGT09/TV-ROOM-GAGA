@@ -42,7 +42,8 @@ function resourceSources(data: any, subject: any) {
   const title = String(subject?.title || "Movie")
   const qualities = Array.isArray(data?.qualities) ? data.qualities
     : Array.isArray(data?.sources) ? data.sources
-    : Array.isArray(data?.availableStreams) ? data.availableStreams : []
+    : Array.isArray(data?.availableStreams) ? data.availableStreams
+    : Array.isArray(data?.streams) ? data.streams : []
   const options = qualities.length ? qualities : (data?.proxyStream || data?.proxyDownload || data?.streamUrl || data?.downloadUrl ||
     data?.bestQualityUrl || data?.best_quality_url || data?.hls || data?.dash || subject?.proxyStream || subject?.proxyDownload ? [{
     quality: data?.quality || subject?.quality || "Auto", format: data?.format || subject?.format || "MP4",
