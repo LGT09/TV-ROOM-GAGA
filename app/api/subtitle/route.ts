@@ -2,12 +2,16 @@ import { NextResponse } from "next/server"
 import { mediaFetch } from "@/lib/providers/media-url"
 import { ProviderError } from "@/lib/providers/http"
 import { unseal } from "@/lib/library/tokens"
+import { cinebaseProxyFetch } from "@/lib/providers/cinebase"
 
 export async function GET(request: Request) {
   try {
     const params = new URL(request.url).searchParams
-    const url = params.get("key") ? unseal<{url:string}>(params.get("key")!, "caption").url : params.get("url") || ""
-    const response = await mediaFetch(url)
+    const token = params.get("key") ? unseal<{url:string;cinebase?:boolean;detailPath?:string}>(params.get("key")!, "caption") : null
+    const url = token?.url || params.get("url") || ""
+    const response = token?.cinebase
+      ? await cinebaseProxyFetch(url, String(token.detailPath || ""), false, "subtitle.srt")
+      : await mediaFetch(url)
     const reader = response.body?.getReader()
     if (!reader) throw new Error("Subtitle body missing.")
     let bytes = 0

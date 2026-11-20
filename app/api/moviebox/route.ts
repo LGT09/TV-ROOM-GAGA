@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server"
-import { movieBoxJson, movieDetail, movieResourceResponse, movieSearch } from "@/lib/providers/moviebox"
+import { movieBoxJson, movieDetail, movieResourceResponse, movieSearch, movieboxApi3Discovery } from "@/lib/providers/moviebox"
 import { ProviderError } from "@/lib/providers/http"
 import { allowedMediaUrl } from "@/lib/providers/media-url"
 import { seal, unseal } from "@/lib/library/tokens"
 import { movieLocalMediaPath, movieResourcePayload, movieSourceCandidates } from "@/lib/providers/moviebox-resources"
 import { kamranMovieDownloads, safeKamranDownloadPage } from "@/lib/providers/kamran-movies"
+import { cinebaseMovieResources } from "@/lib/providers/cinebase"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
@@ -36,6 +37,12 @@ function subtitlesOf(values: any, title: string) {
       return [{ id: String(entry?.id || index), language: String(entry?.language || entry?.lang || entry?.name || `Subtitle ${index + 1}`), label: String(entry?.label || entry?.language || entry?.lang || `Subtitle ${index + 1}`), url: mediaPath(url, "subtitle", title) }]
     } catch { return [] }
   })
+}
+
+function episodeParam(params: URLSearchParams, shortName: "se" | "ep", longName: "season" | "episode") {
+  const raw = params.get(shortName) ?? params.get(longName) ?? "0"
+  const value = Number(raw)
+  return Number.isInteger(value) && value >= 0 && value <= 1000 ? String(value) : "0"
 }
 
 function resourceSources(data: any, subject: any) {
@@ -95,12 +102,17 @@ function resourceSources(data: any, subject: any) {
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams
   const action = params.get("action") || "search"
+    const season = episodeParam(params, "se", "season")
+    const episode = episodeParam(params, "ep", "episode")
   try {
     if (action === "search") {
       const query = (params.get("query") || params.get("keyword") || "").trim().slice(0, 120)
       if (!query) return NextResponse.json({ success: true, results: [], page: 1, hasMore: false, nextPage: null })
       const page = Math.max(1, Math.min(1000, Number(params.get("page")) || 1))
       return NextResponse.json(await movieSearch(query, page), { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=30" } })
+    }
+    if (action === "discovery") {
+      return NextResponse.json(await movieboxApi3Discovery(), { headers: { "Cache-Control": "private, max-age=300, stale-while-revalidate=600" } })
     }
     if (action === "download-page") {
       const token = params.get("pageKey") || ""
@@ -109,14 +121,48 @@ export async function GET(request: Request) {
       if (!url) throw new ProviderError("This download page is not supported.", 400)
       return NextResponse.redirect(new URL(url), { status: 302, headers: { "Cache-Control": "no-store" } })
     }
-    const subjectId = params.get("subjectId") || ""
-    if (!/^\d{5,32}$/.test(subjectId)) throw new ProviderError("Invalid movie title ID.", 400)
+    const subjectId = params.get("subjectId") || params.get("id") || ""
+    const resourceToken = action === "detail" ? params.get("resourceKey") || "" : ""
+    let signedResource: any = null
+    if (resourceToken && resourceToken.length <= 12000) {
+      try {
+        const resource = unseal<any>(resourceToken, "movie-resource")
+        if (String(resource.subjectId) === subjectId) signedResource = resource
+      } catch {}
+    }
+    const isNumericSubject = /^\d{5,32}$/.test(subjectId)
+    const isSignedProviderId = signedResource?.provider === "cinebase" &&
+      /^[A-Za-z0-9_-]{1,200}$/.test(subjectId) &&
+      String(signedResource.subjectId) === subjectId
+    const isSignedTaskId = !!signedResource?.taskId &&
+      /^[A-Za-z0-9_-]{1,200}$/.test(subjectId) &&
+      String(signedResource.subjectId) === subjectId
+    if (!isNumericSubject && !isSignedTaskId && !isSignedProviderId) throw new ProviderError("Invalid movie title ID.", 400)
     if (action === "detail") {
-      const resourceToken = params.get("resourceKey") || ""
-      if (resourceToken && resourceToken.length <= 12000) {
-        try {
-          const resource = unseal<any>(resourceToken, "movie-resource")
-          if (String(resource.subjectId) !== subjectId) throw new ProviderError("Movie source does not match this title.", 400)
+      if (resourceToken && !signedResource) throw new ProviderError("Movie source does not match this title.", 400)
+      if (signedResource) {
+          const resource = signedResource
+          if (resource.provider === "cinebase") {
+            const detailPath = String(resource.detailPath || "")
+            if (!detailPath || detailPath.length > 500) throw new ProviderError("CineBase title path is missing.", 400)
+            const subject = {
+              subjectId,
+              title: String(resource.title || "Movie"),
+              cover: String(resource.cover || ""),
+              genre: String(resource.genre || ""),
+              description: String(resource.description || ""),
+              releaseDate: String(resource.releaseDate || ""),
+              imdbRatingValue: resource.imdbRatingValue || "",
+              detailPath,
+              subjectType: resource.subjectType,
+            }
+            const data = await cinebaseMovieResources(detailPath, subject.title, Number(season) || 1, Number(episode) || 1)
+            return NextResponse.json({
+              success: true,
+              subject: { ...subject, ...(data.detail?.title ? { title: String(data.detail.title) } : {}) },
+              ...resourceSources({ qualities: data.sources, subtitles: data.subtitles }, subject),
+            }, { headers: { "Cache-Control": "private, no-store" } })
+          }
           if (resource.provider === "kamran-sinhalasub") {
             const pages = await kamranMovieDownloads(String(resource.sourceUrl || ""))
             const downloadPages = pages.map(page => ({
@@ -168,10 +214,53 @@ export async function GET(request: Request) {
             }
             return NextResponse.json({ success: true, subject, sources, proxyStream, proxyDownload, proxySubtitles, message: "" }, { headers: { "Cache-Control": "private, no-store" } })
           }
-        } catch (error) {
-          if (error instanceof ProviderError) throw error
-        }
+          const apiSubjectId = String(resource.apiSubjectId || (isNumericSubject ? subjectId : ""))
+          const taskId = String(resource.taskId || "")
+          const taskParam = String(resource.taskParam || "taskId")
+          if (!apiSubjectId && !taskId) throw new ProviderError("Search did not return a movie ID or preparation task.")
+          const detailPath = String(resource.detailPath || "")
+          if (detailPath && !/^[A-Za-z0-9_-]{1,250}$/.test(detailPath)) throw new ProviderError("Invalid movie detail path.", 400)
+          const subject = {
+            subjectId: apiSubjectId || subjectId,
+            title: String(resource.title || "Movie"),
+            cover: String(resource.cover || ""),
+            genre: String(resource.genre || ""),
+            description: String(resource.description || ""),
+            releaseDate: String(resource.releaseDate || ""),
+            imdbRatingValue: String(resource.imdbRatingValue || ""),
+            detailPath,
+          }
+          let download: any
+          try {
+            download = await movieResourceResponse(apiSubjectId, detailPath, season, episode, taskId, taskParam)
+          } catch (primaryError) {
+            const fallbackUrl = String(resource.kamranSourceUrl || "")
+            if (!fallbackUrl) throw primaryError
+            try {
+              const pages = await kamranMovieDownloads(fallbackUrl)
+              return NextResponse.json({
+                success: true,
+                subject,
+                sources: [],
+                proxySubtitles: [],
+                downloadPages: pages.map(page => ({
+                  quality: page.quality,
+                  size: page.size,
+                  url: `/api/moviebox?action=download-page&pageKey=${encodeURIComponent(seal("kamran-download-page", { url: page.url }, 900))}`,
+                })),
+                message: "A direct file is unavailable; alternate download pages are available.",
+              }, { headers: { "Cache-Control": "private, no-store" } })
+            } catch {
+              throw primaryError
+            }
+          }
+          return NextResponse.json({
+            success: true,
+            subject,
+            ...resourceSources(download, subject),
+          }, { headers: { "Cache-Control": "private, no-store" } })
       }
+      if (!isNumericSubject) throw new ProviderError("A task-only result needs its signed search result.")
       const suppliedPath = (params.get("detailPath") || "").slice(0, 250)
       if (suppliedPath && (suppliedPath.includes("..") || suppliedPath.includes("://") || suppliedPath.includes("\\") || suppliedPath.startsWith("/"))) {
         throw new ProviderError("Invalid movie detail path.", 400)
@@ -182,7 +271,7 @@ export async function GET(request: Request) {
       if (String(subject?.subjectId || subjectId) !== subjectId) throw new ProviderError("Movie details did not match this title.")
       const detailPath = suppliedPath || String(subject.detailPath || "")
       if (!detailPath) throw new ProviderError("Movie details did not include a resource path.")
-      const download = await movieResourceResponse(subjectId, detailPath, "0", "0")
+      const download = await movieResourceResponse(subjectId, detailPath, season, episode)
       return NextResponse.json({
         success: true,
         subject: {
@@ -203,7 +292,7 @@ export async function GET(request: Request) {
       const detailPath = (params.get("detailPath") || "").slice(0, 250)
       if (!/^[A-Za-z0-9_-]{1,250}$/.test(detailPath)) throw new ProviderError("A valid title detail path is required.", 400)
       const subject = await movieDetail(subjectId)
-      const download = await movieResourceResponse(subjectId, detailPath, "0", "0")
+      const download = await movieResourceResponse(subjectId, detailPath, season, episode)
       return NextResponse.json({ success: true, ...resourceSources(download, subject) }, { headers: { "Cache-Control": "private, no-store" } })
     }
     throw new ProviderError("Unknown movie action.", 400)

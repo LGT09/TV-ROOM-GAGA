@@ -120,6 +120,7 @@ test("MovieBox API nested stream payload preserves qualities and signed media UR
   assert.equal(movieSourceCandidates(payload.streams[0], "stream")[0], proxy)
   assert.equal(movieSourceCandidates(payload.streams[0], "download")[0], proxy)
   assert.equal(allowedMediaUrl(proxy).hostname, "proxy.cinemind.name.ng")
+  assert.equal(allowedMediaUrl("https://movieboxapi-3xvk.vercel.app/api/proxy?url=https%3A%2F%2Fcdn.example%2Ffilm.mp4").hostname, "movieboxapi-3xvk.vercel.app")
 })
 test("MovieBox search and resource fallbacks merge both default API responses without duplicate titles or URLs", () => {
   const search = movieSearchResponses([
@@ -156,6 +157,24 @@ test("MovieBox API search format merges subject IDs, detail paths, covers and pa
   assert.equal(search.items[0].detailPath, "titanic-m7a9yt0abq6")
   assert.equal(search.items[0].cover.url, "https://pbcdnw.aoneroom.com/image/poster.jpg")
   assert.equal(search.payload.pager.nextPage, "2")
+})
+test("MovieBox search keeps task IDs and exact parameter spelling with the movie detail path", () => {
+  const search = movieSearchResponses([{
+    data: { data: { results: [{
+      title: "Queued film",
+      subject_id: "5390197429792821032",
+      detail_path: "queued-film-hj82k",
+      task_id: "resolve-task-12",
+    }] } },
+  }])
+  assert.equal(search.items[0].subjectId, "5390197429792821032")
+  assert.equal(search.items[0].detailPath, "queued-film-hj82k")
+  assert.equal(search.items[0].taskId, "resolve-task-12")
+  assert.equal(search.items[0].taskParam, "task_id")
+  const taskOnly = movieSearchResponses([{ results: [{ title: "Task title", taskid: "task-only-9", detailPath: "task-title" }] }])
+  assert.equal(taskOnly.items[0].subjectId, "")
+  assert.equal(taskOnly.items[0].taskId, "task-only-9")
+  assert.equal(movieResourcePayload({ results: [{ taskid: "task-only-9", proxyDownload: "https://cacdn.hakunaymatata.com/movie.mp4" }] }, "task-only-9").taskid, "task-only-9")
 })
 test("Kamran SinhalaSub search creates safe hidden-source movie entries", () => {
   const rows = normalizedKamranSearchRows({ results: [

@@ -3,12 +3,24 @@ import { queueVideoExport } from "./client-video-exports"
 import { fileSize } from "./media-info"
 
 /** Stream into the browser's download manager, not into a multi-gigabyte JavaScript Blob. */
-export async function saveMediaFile(input:string,filename?:string,signal?:AbortSignal,onInfo?:(info:{sizeBytes?:number})=>void) {
+export async function saveMediaFile(input:string,filename?:string,signal?:AbortSignal,onInfo?:(info:{sizeBytes?:number})=>void,startImmediately=false) {
   if(typeof navigator!=="undefined"&&!navigator.onLine)throw new Error("You are offline. Reconnect to download this file.")
   const url=new URL(input,window.location.origin)
   if(url.origin!==window.location.origin||url.pathname!=="/api/media")throw new Error("Prepare a secure download from the library first.")
   url.searchParams.set("download","1")
-  const response=await fetch(url.href,{method:"HEAD",cache:"no-store",signal:signal||AbortSignal.timeout(18000)})
+  const preflight=fetch(url.href,{method:"HEAD",cache:"no-store",signal:signal||AbortSignal.timeout(18000)})
+  const startBrowserDownload=()=>{
+    const link=document.createElement("a")
+    link.href=url.href
+    link.download=filename||""
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+  // Movie downloads use the provider's original-file route. Start the native
+  // browser transfer in the click gesture, before waiting on a slow HEAD probe.
+  if(startImmediately)startBrowserDownload()
+  const response=await preflight
   if(!response.ok||/json|html|text\//i.test(response.headers.get("content-type")||"")){
     throw new Error(response.status===400?"This download link expired. Refresh the sources and try again.":"The file could not be reached. Try another quality or refresh the sources.")
   }
@@ -18,12 +30,7 @@ export async function saveMediaFile(input:string,filename?:string,signal?:AbortS
     await queueVideoExport(url,filename,signal)
     return "queued" as const
   }
-  const link=document.createElement("a")
-  link.href=url.href
-  link.download=filename||""
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
+  if(!startImmediately)startBrowserDownload()
   return "downloaded" as const
 }
 

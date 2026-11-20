@@ -421,7 +421,7 @@ test("media route forwards byte ranges and streams an attachment with a safe fil
     allowedMediaUrl: input => new URL(input),
     mediaFetch: async (_url, headers) => {
       observed = headers.Range
-      return new Response("abc", { status:206, headers: { "content-type":"video/mp4", "content-range":"bytes 0-2/10", "accept-ranges":"bytes" } })
+      return new Response("abc", { status:206, headers: { "content-type":"video/mp4", "content-range":"bytes 0-2/10", "content-length":"3", "accept-ranges":"bytes", etag:"fixture-etag", "last-modified":"Wed, 21 Oct 2015 07:28:00 GMT" } })
     },
   } })
   const { seal } = load("lib/library/tokens.ts")
@@ -431,8 +431,79 @@ test("media route forwards byte ranges and streams an attachment with a safe fil
   assert.equal(result.status,206)
   assert.equal(observed,"bytes=0-2")
   assert.equal(result.headers.get("content-range"),"bytes 0-2/10")
+  assert.equal(result.headers.get("content-length"),"3")
+  assert.equal(result.headers.get("etag"),"fixture-etag")
+  assert.equal(result.headers.get("last-modified"),"Wed, 21 Oct 2015 07:28:00 GMT")
   assert.match(result.headers.get("content-disposition"), /^attachment; filename="Title__unsafe_.mp4"$/)
   assert.equal(await result.text(),"abc")
+})
+
+test("MovieBox starts a native file download in the click gesture before its HEAD check resolves",async()=>{
+  let finishHead
+  let clickCount=0
+  const oldWindow=Object.getOwnPropertyDescriptor(globalThis,"window")
+  const oldDocument=Object.getOwnPropertyDescriptor(globalThis,"document")
+  const oldNavigator=Object.getOwnPropertyDescriptor(globalThis,"navigator")
+  Object.defineProperty(globalThis,"window",{configurable:true,value:{location:{origin:"https://app.test"}}})
+  Object.defineProperty(globalThis,"navigator",{configurable:true,value:{onLine:true}})
+  Object.defineProperty(globalThis,"document",{configurable:true,value:{
+    createElement:()=>({href:"",download:"",click(){clickCount++},remove(){}}),
+    body:{appendChild(){}},
+  }})
+  const load=sandbox({
+    [path.resolve("lib/client-json.ts")]:{readApiJson:async response=>response.json()},
+    [path.resolve("lib/client-video-exports.ts")]:{queueVideoExport:async()=>"queued"},
+    [path.resolve("lib/media-info.ts")]:{fileSize:()=>undefined},
+  },()=>new Promise(resolve=>{finishHead=resolve}))
+  try{
+    const save=load("lib/client-download.ts").saveMediaFile
+    const pending=save("/api/media?key=fixture","Alone-720p.mp4",undefined,undefined,true)
+    assert.equal(clickCount,1)
+    finishHead(new Response(null,{status:200,headers:{
+      "content-type":"video/mp4",
+      "x-tvroom-media-kind":"video",
+      "x-tvroom-download-mode":"original",
+      "x-tvroom-file-size":"1024",
+    }}))
+    assert.equal(await pending,"downloaded")
+  }finally{
+    for(const [name,descriptor] of [["window",oldWindow],["document",oldDocument],["navigator",oldNavigator]]){
+      if(descriptor)Object.defineProperty(globalThis,name,descriptor)
+      else delete globalThis[name]
+    }
+  }
+})
+test("MovieBox API accepts an id alias and routes its episode identity to OmegaTech",async()=>{
+  const calls=[]
+  const mediaUrl="https://stream.omegatech.app/files/alone-s1e2.mp4"
+  const load=sandbox({},async(input,options={})=>{
+    const url=new URL(String(input))
+    calls.push({url,range:options.headers?.Range})
+    if(url.hostname==="api.omegatech.app")return Response.json({
+      success:true,
+      qualities:[{id:"alone-720",quality:"720p",format:"MP4",streamUrl:mediaUrl,downloadUrl:mediaUrl}],
+      subtitles:[{language:"English",url:"https://stream.omegatech.app/subtitles/alone-en.srt"}],
+    })
+    if(url.hostname==="stream.omegatech.app")return new Response(Buffer.from([0,0,0,24,102,116,121,112,105,115,111,109]),{
+      status:206,
+      headers:{"content-type":"video/mp4","content-range":"bytes 0-11/126477249"},
+    })
+    throw new Error(`Unexpected provider request: ${url.hostname}`)
+  })
+  const {GET}=load("app/api/moviebox/route.ts")
+  const response=await GET(new Request("https://app.test/api/moviebox?action=detail&id=4865129253278498768&detailPath=alone-cSEInMiloN5&se=1&ep=2&title=Alone"))
+  const data=await response.json()
+  const request=calls.find(call=>call.url.hostname==="api.omegatech.app")
+  assert.equal(response.status,200)
+  assert.equal(request.url.searchParams.get("action"),"download")
+  assert.equal(request.url.searchParams.get("subjectId"),"4865129253278498768")
+  assert.equal(request.url.searchParams.get("detailPath"),"alone-cSEInMiloN5")
+  assert.equal(request.url.searchParams.get("se"),"1")
+  assert.equal(request.url.searchParams.get("ep"),"2")
+  assert.equal(data.success,true)
+  assert.equal(data.sources[0].quality,"720p")
+  assert.ok(data.sources[0].proxyDownload.startsWith("/api/media?key="))
+  assert.ok(data.sources[0].proxyDownload.endsWith("&download=1"))
 })
 test("HLS manifests rewrite child media requests and cannot be saved as full-film MP4", async () => {
   const load = sandbox({ [path.resolve("lib/providers/media-url.ts")]: {

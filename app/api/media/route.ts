@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
 export const maxDuration=60
 import { allowedMediaUrl, mediaFetch } from "@/lib/providers/media-url"
+import { cinebaseProxyFetch } from "@/lib/providers/cinebase"
 import { ProviderError } from "@/lib/providers/http"
 import { seal, unseal } from "@/lib/library/tokens"
 import { fileSize } from "@/lib/media-info"
 
-type MediaToken = { url: string; title?: string; kind: string; format?: string; fallbacks?: string[]; branded?:boolean; downloadMode?:string }
+type MediaToken = { url: string; title?: string; kind: string; format?: string; fallbacks?: string[]; branded?:boolean; downloadMode?:string; cinebase?:boolean; detailPath?:string }
 export const dynamic = "force-dynamic"
 export async function GET(request: Request) {
   try {
@@ -17,6 +18,17 @@ export async function GET(request: Request) {
     let lastError:unknown
     for(const url of [token.url,...(Array.isArray(token.fallbacks)?token.fallbacks.slice(0,2):[])]) {
       try {
+        if (token.cinebase) {
+          const title = (token.title || "TV Room movie").replace(/[^\w. -]/g, "_").slice(0, 100)
+          response = await cinebaseProxyFetch(
+            token.url,
+            String(token.detailPath || ""),
+            p.get("download") === "1",
+            `${title}.${/\.webm(?:[?#]|$)/i.test(token.url) ? "webm" : "mp4"}`,
+            range,
+          )
+          break
+        }
         const mediaHost=new URL(url).hostname
         const sportHeaders:Record<string,string>=mediaHost==="aisports.mobi"||mediaHost.endsWith(".aisports.mobi")
           ? { Referer: "https://www.sportslive.wine/", Origin: "https://www.sportslive.wine", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" }
@@ -39,10 +51,18 @@ export async function GET(request: Request) {
       const text = await response.text()
       if (text.length > 1_000_000 || !text.trimStart().startsWith("#EXTM3U")) throw new ProviderError("Invalid stream manifest.")
       const child = (relative: string) => {
-        const url = new URL(relative, response.url||token.url).href
-        allowedMediaUrl(url)
+        const url = new URL(relative, token.cinebase ? token.url : response.url||token.url).href
+        if (token.cinebase) {
+          const parsed = new URL(url)
+          if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new ProviderError("Invalid stream segment URL.")
+        } else {
+          allowedMediaUrl(url)
+        }
         const format = /\.m3u8(?:[?#]|$)/i.test(url) ? "HLS" : "segment"
-        return `/api/media?key=${seal("media", { url, kind: "video", format }, 21600)}${format === "HLS" ? "&format=hls" : ""}`
+        return `/api/media?key=${seal("media", {
+          url, kind: "video", format,
+          ...(token.cinebase ? { cinebase: true, detailPath: token.detailPath } : {}),
+        }, 21600)}${format === "HLS" ? "&format=hls" : ""}`
       }
       const manifest = text.split(/\r?\n/).map(line => {
         if (!line.trim()) return line
@@ -57,9 +77,13 @@ export async function GET(request: Request) {
     if(bytes)headers.set("X-TVRoom-File-Size",String(bytes))
     if(token.downloadMode==="original")headers.set("X-TVRoom-Download-Mode","original")
     if(token.branded)headers.set("X-TVRoom-Watermark","permanent")
-    for (const name of ["Content-Range", "Accept-Ranges"]) {
+    for (const name of ["Content-Range", "Accept-Ranges", "ETag", "Last-Modified"]) {
       const value = response.headers.get(name)
       if (value) headers.set(name, value)
+    }
+    const contentLength = response.headers.get("Content-Length")
+    if (!response.headers.get("Content-Encoding") && contentLength && /^\d+$/.test(contentLength)) {
+      headers.set("Content-Length", contentLength)
     }
     if (p.get("download") === "1") {
       const extension = token.kind==="audio" ? (["M4A","AAC","WEBM","OGG"].includes(token.format||"")?token.format!.toLowerCase():"mp3") : /\.webm(?:[?#]|$)/i.test(token.url) ? "webm" : "mp4"

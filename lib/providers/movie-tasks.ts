@@ -18,6 +18,18 @@ export function movieTask(value: any, depth = 0): MovieTask | undefined {
     if (found) return {...found,pollUrl:found.pollUrl||value.statusUrl||value.status_url||value.pollUrl||value.poll_url}
   }
 }
+function readyMediaUrl(value: any, depth = 0): string {
+  if (!value || typeof value !== "object" || depth > 5) return ""
+  for (const key of ["originalDownloadUrl", "downloadUrl", "proxyDownload", "originalStreamUrl", "streamUrl", "proxyStream", "videoUrl", "url", "link"]) {
+    const url = webUrl(value[key])
+    if (url) return url
+  }
+  for (const key of ["data", "result", "results", "resource", "download", "stream", "file"]) {
+    const found = readyMediaUrl(value[key], depth + 1)
+    if (found) return found
+  }
+  return ""
+}
 const pending = new Map<string, { data: any; task?:MovieTask; expires: number }>()
 export function safeTaskUrl(value: string, request: string) {
   const url = new URL(value, request)
@@ -38,7 +50,7 @@ export async function movieTaskRequest(request: string) {
     lastTask=task
     const state = String(current.status || current.data?.status || current.result?.status || current.task?.status || current.job?.status || "").toLowerCase()
     const root=current.data||current.result||current
-    if(/^(completed|complete|success|ready|finished|done)$/.test(state)&&webUrl(root.url||root.link)){pending.delete(request);return current}
+    if(/^(completed|complete|success|ready|finished|done)$/.test(state)&&readyMediaUrl(current)){pending.delete(request);return current}
     if (/^(failed|error|cancelled|canceled|expired|locked|paid)$/.test(state)) {
       pending.delete(request)
       throw new ProviderError("The movie preparation task failed or requires access that is unavailable.")

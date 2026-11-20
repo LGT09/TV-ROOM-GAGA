@@ -5,7 +5,7 @@ import { Download, LoaderCircle } from "lucide-react"
 import { saveMediaFile } from "@/lib/client-download"
 import { formatFileSize } from "@/lib/media-info"
 
-export function CheckedDownload({url,label="Download file",filename}:{url:string;label?:string;filename?:string}) {
+export function CheckedDownload({url,label="Download file",filename,immediate=false}:{url:string;label?:string;filename?:string;immediate?:boolean}) {
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState("")
   const [error,setError]=useState(false)
@@ -19,7 +19,7 @@ export function CheckedDownload({url,label="Download file",filename}:{url:string
     setBusy(true);setMessage("");setError(false)
     try{
       let size:number|undefined
-      const result=await saveMediaFile(url,filename,abort.signal,info=>{size=info.sizeBytes})
+      const result=await saveMediaFile(url,filename,abort.signal,info=>{size=info.sizeBytes},immediate)
       setMessage(`${formatFileSize(size)} · ${result==="queued"?"Background processing started. Use Watermarked videos to check progress and save the finished file.":"Sent to your browser’s downloads. Your browser handles saving the file."}`)
     }catch(e){
       setError(true)

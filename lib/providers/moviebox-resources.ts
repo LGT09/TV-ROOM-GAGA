@@ -37,35 +37,65 @@ export function movieResourcePayload(raw: any, subjectId?: string) {
       const items = container[key]
       if (!Array.isArray(items)) continue
       const item = subjectId
-        ? items.find((candidate: any) => String(candidate?.subjectId || candidate?.subject_id || candidate?.id || "") === subjectId)
+        ? items.find((candidate: any) => String(candidate?.subjectId || candidate?.subject_id || candidate?.id || candidate?.taskId || candidate?.task_id || candidate?.taskid || candidate?.jobId || candidate?.job_id || "") === subjectId)
         : items[0]
       if (item && (item.qualities?.length || item.sources?.length ||
           item.availableStreams?.length || item.streams?.length ||
           item.proxyStream || item.proxyDownload || item.streamUrl || item.downloadUrl ||
-          item.bestQualityUrl || item.best_quality_url || item.hls || item.dash)) return item
+          item.url || item.link || item.bestQualityUrl || item.best_quality_url || item.hls || item.dash)) return item
     }
   }
   return containers[0] || raw || {}
 }
 
+function scalar(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : ""
+}
+
+function taskIdentity(item: any) {
+  const nested = item?.task || item?.job || {}
+  const taskParam = ["taskId", "task_id", "taskid", "jobId", "job_id"]
+    .find(key => item?.[key] !== undefined) ||
+    ["taskId", "task_id", "taskid", "jobId", "job_id"].find(key => nested?.[key] !== undefined)
+  const taskId = taskParam
+    ? scalar(item?.[taskParam] ?? nested?.[taskParam])
+    : scalar(nested?.id)
+  const subjectId = scalar(item?.subjectId || item?.subject_id || item?.subjectID || item?.movieId || item?.movie_id || item?.id)
+  return { subjectId, taskId, taskParam: taskParam || (taskId ? "taskId" : "") }
+}
+
 export function movieSearchResponses(rawResponses: any[]) {
   const payloads = rawResponses.map(raw => {
-    const candidates = [raw?.data?.data, raw?.data, raw?.result, raw]
-    return candidates.find(value => Array.isArray(value?.results) || Array.isArray(value?.items)) || raw
+    const queue = [raw]
+    const seen = new Set<any>()
+    while (queue.length) {
+      const value = queue.shift()
+      if (!value || typeof value !== "object" || seen.has(value)) continue
+      seen.add(value)
+      if (Array.isArray(value?.results) || Array.isArray(value?.items)) return value
+      for (const key of ["data", "result", "raw", "payload"]) {
+        if (value[key] && typeof value[key] === "object") queue.push(value[key])
+      }
+    }
+    return raw
   })
   const itemsById = new Map<string, any>()
   for (const payload of payloads) {
     const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []
     for (const item of rows) {
-      const id = String(item?.subjectId || item?.subject_id || item?.id || "")
+      const identity = taskIdentity(item)
+      const id = identity.subjectId || identity.taskId
       if (!id) continue
       const existing = itemsById.get(id) || {}
       itemsById.set(id, {
         ...existing,
         ...item,
+        subjectId: identity.subjectId || existing.subjectId || "",
+        taskId: identity.taskId || existing.taskId || "",
+        taskParam: identity.taskParam || existing.taskParam || "",
         cover: item.cover || existing.cover,
         poster: item.poster || existing.poster,
-        detailPath: item.detailPath || item.detail_path || item.slug || existing.detailPath,
+        detailPath: item.detailPath || item.detail_path || item.detailpath || item.slug || existing.detailPath,
       })
     }
   }
@@ -106,9 +136,12 @@ export function mergeMovieResourceResponses(rawResponses: any[], subjectId: stri
 }
 
 export function movieSourceCandidates(item: any, kind: SourceKind): string[] {
+  const adaptive = /^(?:HLS|DASH)$/i.test(String(item?.format || "")) ||
+    [item?.url, item?.streamUrl, item?.stream_url, item?.proxyStream, item?.originalStreamUrl]
+      .some(value => typeof value === "string" && /\.(?:m3u8|mpd)(?:[?#]|$)/i.test(value))
   const keys = kind === "stream"
     ? ["originalStreamUrl", "original_stream_url", "directStreamUrl", "directUrl", "streamUrl", "stream_url", "proxyStream", "playUrl", "play_url", "videoUrl", "video_url", "url"]
-    : ["originalDownloadUrl", "original_download_url", "directDownloadUrl", "directUrl", "downloadUrl", "download_url", "fileUrl", "file_url", "proxyDownload", "url", "originalStreamUrl", "streamUrl"]
+    : ["originalDownloadUrl", "original_download_url", "directDownloadUrl", "directUrl", "downloadUrl", "download_url", "fileUrl", "file_url", "proxyDownload", "url", ...(!adaptive ? ["originalStreamUrl", "streamUrl", "proxyStream"] : [])]
   const allKeys = kind === "stream"
     ? [...keys, "bestQualityUrl", "best_quality_url", "direct_url", "hls", "dash"]
     : [...keys, "bestQualityUrl", "best_quality_url", "direct_url"]

@@ -57,7 +57,7 @@ export function normalizeProvider(data: any, provider: string) {
   function addSource(value: any, label = "Original", explicit = false) {
     if (typeof value === "string") value = { url: value }
     if (!value || typeof value !== "object" || value.locked === true || value.unlock === false) return
-    const url = webUrl(value.originalStreamUrl || value.streamUrl || value.stream_url || value.videoUrl || value.video_url || value.downloadUrl || value.download_url || value.download_link || value.download || value.direct || value.file || value.src || value.url || value.link)
+    const url = webUrl(value.originalStreamUrl || value.original_stream_url || value.streamUrl || value.stream_url || value.proxyStream || value.proxy_stream || value.videoUrl || value.video_url || value.downloadUrl || value.download_url || value.proxyDownload || value.proxy_download || value.download_link || value.download || value.directUrl || value.direct_url || value.direct || value.fileUrl || value.file_url || value.file || value.src || value.url || value.link)
     // Never treat a title page or embedded HTML server as a playable file.
     if (!url || (!explicit && !direct(url)) || seenSources.has(url)) return
     if (/\.(srt|vtt)(?:[?#]|$)/i.test(url)) return
@@ -81,7 +81,7 @@ export function normalizeProvider(data: any, provider: string) {
     for (const [key, child] of Object.entries(value)) {
       if(sourceContainer.test(context)&&/^\d{3,4}p?$/.test(key)&&typeof child==="string"){addSource({url:child,quality:key},key,true);continue}
       if(value.originalStreamUrl&&key==="streamUrl")continue
-      if (/^(bestQualityUrl|streamUrl|stream_url|videoUrl|video_url|downloadUrl|download_url|direct_url|playUrl|play_url|m3u8|mp4|hd|sd|hd_url|sd_url|nowatermark|no_watermark|audio)$/i.test(key) && typeof child === "string") addSource({ url: child, quality: value.quality || key }, key, true)
+      if (/^(bestQualityUrl|best_quality_url|originalStreamUrl|original_stream_url|originalDownloadUrl|original_download_url|streamUrl|stream_url|proxyStream|proxy_stream|videoUrl|video_url|downloadUrl|download_url|proxyDownload|proxy_download|directUrl|direct_url|fileUrl|file_url|playUrl|play_url|m3u8|mp4|hd|sd|hd_url|sd_url|nowatermark|no_watermark|audio)$/i.test(key) && typeof child === "string") addSource({ url: child, quality: value.quality || key }, key, true)
       else if (child && typeof child === "object" && !["cast", "performers", "audio_tracks", "trailer", "recommendations", "items", "featured", "episodes", "chapters", "cover", "image", "images", "media"].includes(key)) sourceWalk(child, depth + 1, key)
     }
   }

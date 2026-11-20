@@ -9,6 +9,7 @@ import { readApiJson } from "@/lib/client-json"
 
 type Movie = { subjectId: string; detailPath?: string; title: string; cover: string; genre: string; imdbRatingValue: string | number; releaseDate?: string; resourceKey?: string }
 type SearchResult = { results: Movie[]; page: number; nextPage: number | null; hasMore: boolean; totalCount?: number }
+type Discovery = { featured: { title: string; cover: string; year: string }[]; popularSearches: string[] }
 
 export function MovieBoxBrowser() {
   const [query, setQuery] = useState("")
@@ -16,8 +17,18 @@ export function MovieBoxBrowser() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [discovery, setDiscovery] = useState<Discovery | null>(null)
   const request = useRef<AbortController | null>(null)
   const requestId = useRef(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch("/api/moviebox?action=discovery", { signal: controller.signal })
+      .then(readApiJson)
+      .then(data => setDiscovery({ featured: data.featured || [], popularSearches: data.popularSearches || [] }))
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
 
   useEffect(() => {
     const term = query.trim()
@@ -50,6 +61,19 @@ export function MovieBoxBrowser() {
       <p className="mt-2 px-1 text-xs text-muted-foreground">Search results load as you type. Open a title for playback, subtitles and available downloads.</p>
     </div>
     {error && <div role="alert" className="glass-card flex items-center gap-3 rounded-xl p-4 text-sm"><AlertCircle className="h-5 w-5 text-destructive" />{error}</div>}
+    {!query.trim() && discovery?.popularSearches.length ? <div className="glass-card rounded-2xl p-4 sm:p-5">
+      <h2 className="text-sm font-semibold">Popular searches</h2>
+      <div className="mt-3 flex flex-wrap gap-2">{discovery.popularSearches.map(term => <Button key={term} variant="outline" size="sm" onClick={() => { setQuery(term); setPage(1) }}>{term}</Button>)}</div>
+    </div> : null}
+    {!query.trim() && discovery?.featured.length ? <section className="space-y-3">
+      <div className="flex items-center justify-between"><h2 className="font-display text-xl">Trending picks</h2><span className="text-xs text-muted-foreground">Tap a title to search</span></div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {discovery.featured.map(movie => <button key={`${movie.title}-${movie.year}`} type="button" onClick={() => { setQuery(movie.title); setPage(1) }} className="glass-card group min-w-0 overflow-hidden rounded-2xl text-left transition hover:-translate-y-0.5 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <div className="aspect-[2/3] overflow-hidden bg-muted">{movie.cover ? <img src={movie.cover} alt="" loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" /> : <div className="flex h-full items-center justify-center text-muted-foreground"><Film className="h-8 w-8" /></div>}</div>
+          <div className="p-3"><h3 className="line-clamp-2 min-h-10 text-sm font-semibold">{movie.title}</h3>{movie.year && <span className="text-xs text-muted-foreground">{movie.year}</span>}</div>
+        </button>)}
+      </div>
+    </section> : null}
     {!query.trim() && <div className="glass-card rounded-2xl p-8 text-center"><Film className="mx-auto h-8 w-8 text-primary" /><p className="mt-3 font-semibold">Find a movie to get started</p><p className="mt-1 text-sm text-muted-foreground">Type a title above to search the catalogue.</p></div>}
     {result && <>
       <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground"><span>{result.totalCount ? `${result.totalCount.toLocaleString()} results` : `${result.results.length} titles`} · page {result.page}</span><span>20 per page</span></div>

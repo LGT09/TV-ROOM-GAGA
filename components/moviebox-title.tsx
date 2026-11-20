@@ -15,7 +15,7 @@ type MovieDetail = { subjectId: string; title: string; cover: string; genre: str
 type Subtitle = { language: string; label: string; url: string }
 type DownloadPage = { quality: string; size: string; url: string }
 
-export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie, resourceKey }: { subjectId: string; initialTitle?: string; initialMovie?: MovieDetail; resourceKey?: string }) {
+export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie, resourceKey, season = 0, episode = 0 }: { subjectId: string; initialTitle?: string; initialMovie?: MovieDetail; resourceKey?: string; season?: number; episode?: number }) {
   const [movie, setMovie] = useState<MovieDetail | null>(initialMovie || null)
   const [sources, setSources] = useState<Source[]>([])
   const [downloadPages, setDownloadPages] = useState<DownloadPage[]>([])
@@ -29,7 +29,7 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    const params = new URLSearchParams({ action: "detail", subjectId })
+    const params = new URLSearchParams({ action: "detail", subjectId, se: String(season), ep: String(episode) })
     if (resourceKey) params.set("resourceKey", resourceKey)
     if (initialMovie?.detailPath) {
       params.set("detailPath", initialMovie.detailPath)
@@ -47,13 +47,15 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Movie details could not be loaded.") })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [subjectId, initialMovie?.detailPath, initialMovie?.title, resourceKey])
+  }, [subjectId, initialMovie?.detailPath, initialMovie?.title, resourceKey, season, episode])
 
   const share = async () => {
     const params = new URLSearchParams()
     if (resourceKey) params.set("resource", resourceKey)
     if (movie?.title || initialTitle) params.set("title", movie?.title || initialTitle)
     if (movie?.detailPath) params.set("detailPath", movie.detailPath)
+    if (season > 0) params.set("se", String(season))
+    if (episode > 0) params.set("ep", String(episode))
     const suffix = params.size ? `?${params}` : ""
     const url = `${window.location.origin}/mv/${encodeURIComponent(subjectId)}${suffix}`
     try {
@@ -83,7 +85,7 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
     {current && <section className="glass-card space-y-4 rounded-3xl p-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-xl">Watch</h2><p className="text-xs text-muted-foreground">Available sources and subtitles</p></div><div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="movie-quality">Playback and download quality</label><select id="movie-quality" value={selected} onChange={event => setSelected(Number(event.target.value))} className="h-10 max-w-[190px] rounded-lg border border-border bg-card px-3 text-sm">{sources.map((source, index) => { const size = Number(source.size); return <option key={`${source.quality}-${index}`} value={index}>{source.quality} · {source.format}{source.size ? ` · ${Number.isFinite(size) && size > 1024 ? formatFileSize(size) : source.size}` : ""}</option> })}</select>
-        {current.proxyDownload && <CheckedDownload url={current.proxyDownload} label={`Download ${current.quality}`} filename={`${movie?.title || "movie"}-${current.quality}`} />}
+        {current.proxyDownload && <CheckedDownload url={current.proxyDownload} label={`Download ${current.quality}`} filename={`${movie?.title || "movie"}-${current.quality}`} immediate />}
       </div></div>
       {current.proxyStream ? <MediaPlayback key={current.proxyStream} src={current.proxyStream} title={movie?.title || initialTitle} subtitles={subtitle ? subtitles.filter(item => item.url === subtitle) : []} /> : <p role="status" className="text-sm text-muted-foreground">A playback source is unavailable, but downloads may still be available.</p>}
       {subtitles.length > 0 && <div className="flex flex-wrap items-center gap-2"><label htmlFor="movie-subtitles" className="text-sm font-medium">Subtitles</label><select id="movie-subtitles" value={subtitle} onChange={event => setSubtitle(event.target.value)} className="h-10 rounded-lg border border-border bg-card px-3 text-sm"><option value="">Off</option>{subtitles.map((item, index) => <option key={`${item.url}-${index}`} value={item.url}>{item.label || item.language}</option>)}</select></div>}
