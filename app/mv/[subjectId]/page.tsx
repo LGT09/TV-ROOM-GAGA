@@ -65,7 +65,7 @@ export default async function MoviePage({ params, searchParams }: Props) {
   const validDetailPath = typeof detailPathParam === "string" && /^[A-Za-z0-9_-]{1,250}$/.test(detailPathParam)
   let initialMovie = {
     subjectId, title: String(titleParam || "Movie").slice(0, 180), cover: "", genre: "", description: "",
-    releaseDate: "", imdbRatingValue: "", detailPath: validDetailPath ? detailPathParam : "",
+    releaseDate: "", imdbRatingValue: "", detailPath: validDetailPath ? detailPathParam : "", cast: [],
   }
   if (resource) {
     initialMovie = {
@@ -77,6 +77,7 @@ export default async function MoviePage({ params, searchParams }: Props) {
       releaseDate: String(resource.releaseDate || ""),
       imdbRatingValue: String(resource.imdbRatingValue || ""),
       detailPath: String(resource.detailPath || ""),
+      cast: Array.isArray(resource.cast) ? resource.cast : [],
     }
   } else if (!validDetailPath) try {
       const subject = await movieDetail(subjectId)
@@ -89,6 +90,7 @@ export default async function MoviePage({ params, searchParams }: Props) {
         releaseDate: String(subject.releaseDate || ""),
         imdbRatingValue: String(subject.imdbRatingValue || ""),
         detailPath: String(subject.detailPath || ""),
+        cast: Array.isArray(subject.cast) ? subject.cast : [],
       }
     } catch {}
   return <MovieBoxTitle subjectId={subjectId} initialTitle={initialMovie.title} initialMovie={initialMovie} resourceKey={resource ? resourceKey : undefined} season={season} episode={episode} />

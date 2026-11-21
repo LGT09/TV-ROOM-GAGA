@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Copy, Film, LoaderCircle, Share2, Star } from "lucide-react"
+import { ArrowLeft, Copy, Film, LoaderCircle, Share2, Star, UserRound } from "lucide-react"
 import { AppLayout } from "@/components/app-layout"
 import { MediaPlayback } from "@/components/media-playback"
 import { CheckedDownload } from "@/components/checked-download"
@@ -11,7 +11,8 @@ import { readApiJson } from "@/lib/client-json"
 import { formatFileSize } from "@/lib/media-info"
 
 type Source = { quality: string; format: string; size: string | number; proxyStream: string; proxyDownload: string }
-type MovieDetail = { subjectId: string; title: string; cover: string; genre: string; description: string; releaseDate: string; imdbRatingValue: string; detailPath: string }
+type Actor = { name: string; character?: string; profileUrl?: string }
+type MovieDetail = { subjectId: string; title: string; cover: string; genre: string; description: string; releaseDate: string; imdbRatingValue: string; detailPath: string; cast?: Actor[] }
 type Subtitle = { language: string; label: string; url: string }
 type DownloadPage = { quality: string; size: string; url: string }
 
@@ -35,11 +36,32 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
       params.set("detailPath", initialMovie.detailPath)
       params.set("title", initialMovie.title)
     }
+    if (!initialMovie?.cast?.length) {
+      const metadataParams = new URLSearchParams({ action: "metadata", subjectId })
+      if (resourceKey) metadataParams.set("resourceKey", resourceKey)
+      fetch(`/api/moviebox?${metadataParams}`, { cache: "no-store", signal: controller.signal })
+        .then(readApiJson)
+        .then(data => {
+          if (!data.success || !data.subject) return
+          setMovie(current => ({
+            ...current,
+            ...data.subject,
+            title: data.subject.title || current?.title || initialTitle,
+            cover: data.subject.cover || current?.cover || "",
+            genre: data.subject.genre || current?.genre || "",
+            description: data.subject.description || current?.description || "",
+            releaseDate: data.subject.releaseDate || current?.releaseDate || "",
+            imdbRatingValue: data.subject.imdbRatingValue || current?.imdbRatingValue || "",
+            cast: data.subject.cast?.length ? data.subject.cast : current?.cast || [],
+          }))
+        })
+        .catch(() => {})
+    }
     fetch(`/api/moviebox?${params}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
         const data = await readApiJson(response)
         if (!response.ok || data.success === false) throw new Error(data.error || "Movie details could not be loaded.")
-        setMovie(current => ({ ...current, ...data.subject, cover: data.subject?.cover || current?.cover || "", genre: data.subject?.genre || current?.genre || "", description: data.subject?.description || current?.description || "", releaseDate: data.subject?.releaseDate || current?.releaseDate || "", imdbRatingValue: data.subject?.imdbRatingValue || current?.imdbRatingValue || "" }))
+        setMovie(current => ({ ...current, ...data.subject, cover: data.subject?.cover || current?.cover || "", genre: data.subject?.genre || current?.genre || "", description: data.subject?.description || current?.description || "", releaseDate: data.subject?.releaseDate || current?.releaseDate || "", imdbRatingValue: data.subject?.imdbRatingValue || current?.imdbRatingValue || "", cast: data.subject?.cast?.length ? data.subject.cast : current?.cast || [] }))
         setSources(data.sources || [])
         setDownloadPages(data.downloadPages || [])
         setSubtitles(data.proxySubtitles || [])
@@ -82,6 +104,17 @@ export function MovieBoxTitle({ subjectId, initialTitle = "Movie", initialMovie,
         </div>
       </div>
     </section>
+    {movie?.cast?.length ? <section aria-labelledby="movie-cast-heading" className="glass-card space-y-4 rounded-3xl p-4 sm:p-5">
+      <div><p className="text-xs font-bold uppercase tracking-[.18em] text-primary">People in this title</p><h2 id="movie-cast-heading" className="mt-1 font-display text-xl sm:text-2xl">Cast &amp; actors</h2></div>
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+        {movie.cast.map((actor, index) => <li key={`${actor.name}-${index}`} className="min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card/65">
+          <div className="aspect-square overflow-hidden bg-muted">
+            {actor.profileUrl ? <img src={actor.profileUrl} alt={actor.name} loading="lazy" className="h-full w-full object-cover" /> : <div aria-hidden="true" className="flex h-full items-center justify-center text-primary/70"><UserRound className="h-10 w-10" /></div>}
+          </div>
+          <div className="p-3"><p className="truncate text-sm font-semibold" title={actor.name}>{actor.name}</p>{actor.character && <p className="mt-1 truncate text-xs text-muted-foreground" title={actor.character}>{actor.character}</p>}</div>
+        </li>)}
+      </ul>
+    </section> : null}
     {current && <section className="glass-card space-y-4 rounded-3xl p-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-xl">Watch</h2><p className="text-xs text-muted-foreground">Available sources and subtitles</p></div><div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="movie-quality">Playback and download quality</label><select id="movie-quality" value={selected} onChange={event => setSelected(Number(event.target.value))} className="h-10 max-w-[190px] rounded-lg border border-border bg-card px-3 text-sm">{sources.map((source, index) => { const size = Number(source.size); return <option key={`${source.quality}-${index}`} value={index}>{source.quality} · {source.format}{source.size ? ` · ${Number.isFinite(size) && size > 1024 ? formatFileSize(size) : source.size}` : ""}</option> })}</select>

@@ -6,6 +6,7 @@ import { seal, unseal } from "@/lib/library/tokens"
 import { movieLocalMediaPath, movieResourcePayload, movieSourceCandidates } from "@/lib/providers/moviebox-resources"
 import { kamranMovieDownloads, safeKamranDownloadPage } from "@/lib/providers/kamran-movies"
 import { cinebaseMovieResources } from "@/lib/providers/cinebase"
+import { normalizeMovieCast } from "@/lib/providers/moviebox-metadata"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
@@ -43,6 +44,18 @@ function episodeParam(params: URLSearchParams, shortName: "se" | "ep", longName:
   const raw = params.get(shortName) ?? params.get(longName) ?? "0"
   const value = Number(raw)
   return Number.isInteger(value) && value >= 0 && value <= 1000 ? String(value) : "0"
+}
+
+async function movieSubjectWithCast(subject: any, subjectId: string) {
+  const cast = normalizeMovieCast(subject)
+  if (cast.length) return { ...subject, cast }
+  if (!/^\d{5,32}$/.test(subjectId)) return { ...subject, cast: [] }
+  try {
+    const detail = await movieDetail(subjectId)
+    return { ...subject, cast: normalizeMovieCast(detail) }
+  } catch {
+    return { ...subject, cast: [] }
+  }
 }
 
 function resourceSources(data: any, subject: any) {
@@ -122,7 +135,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(new URL(url), { status: 302, headers: { "Cache-Control": "no-store" } })
     }
     const subjectId = params.get("subjectId") || params.get("id") || ""
-    const resourceToken = action === "detail" ? params.get("resourceKey") || "" : ""
+    const resourceToken = action === "detail" || action === "metadata" ? params.get("resourceKey") || "" : ""
     let signedResource: any = null
     if (resourceToken && resourceToken.length <= 12000) {
       try {
@@ -138,6 +151,28 @@ export async function GET(request: Request) {
       /^[A-Za-z0-9_-]{1,200}$/.test(subjectId) &&
       String(signedResource.subjectId) === subjectId
     if (!isNumericSubject && !isSignedTaskId && !isSignedProviderId) throw new ProviderError("Invalid movie title ID.", 400)
+    if (action === "metadata") {
+      const lookupId = String(signedResource?.apiSubjectId || (isNumericSubject ? subjectId : ""))
+      let detail: any = {}
+      if (/^\d{5,32}$/.test(lookupId)) {
+        try { detail = await movieDetail(lookupId) } catch {}
+      }
+      const source = { ...signedResource, ...detail }
+      return NextResponse.json({
+        success: true,
+        subject: {
+          subjectId,
+          title: String(source.title || ""),
+          cover: source.cover?.url || source.cover || "",
+          genre: source.genre || source.genres || "",
+          description: source.description || source.overview || "",
+          releaseDate: source.releaseDate || source.release_date || "",
+          imdbRatingValue: source.imdbRatingValue || source.rating || "",
+          detailPath: String(source.detailPath || source.detail_path || ""),
+          cast: normalizeMovieCast(detail).length ? normalizeMovieCast(detail) : normalizeMovieCast(signedResource),
+        },
+      }, { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=120" } })
+    }
     if (action === "detail") {
       if (resourceToken && !signedResource) throw new ProviderError("Movie source does not match this title.", 400)
       if (signedResource) {
@@ -157,9 +192,10 @@ export async function GET(request: Request) {
               subjectType: resource.subjectType,
             }
             const data = await cinebaseMovieResources(detailPath, subject.title, Number(season) || 1, Number(episode) || 1)
+            const cast = normalizeMovieCast(data.detail || subject)
             return NextResponse.json({
               success: true,
-              subject: { ...subject, ...(data.detail?.title ? { title: String(data.detail.title) } : {}) },
+              subject: { ...subject, cast, ...(data.detail?.title ? { title: String(data.detail.title) } : {}) },
               ...resourceSources({ qualities: data.sources, subtitles: data.subtitles }, subject),
             }, { headers: { "Cache-Control": "private, no-store" } })
           }
@@ -179,6 +215,7 @@ export async function GET(request: Request) {
               releaseDate: String(resource.releaseDate || ""),
               imdbRatingValue: resource.imdbRatingValue || "",
               detailPath: String(resource.detailPath || ""),
+              cast: normalizeMovieCast(resource),
             }
             return NextResponse.json({
               success: true,
@@ -211,6 +248,7 @@ export async function GET(request: Request) {
               releaseDate: String(resource.releaseDate || ""),
               imdbRatingValue: resource.imdbRatingValue || "",
               detailPath: String(resource.detailPath || ""),
+              cast: normalizeMovieCast(resource),
             }
             return NextResponse.json({ success: true, subject, sources, proxyStream, proxyDownload, proxySubtitles, message: "" }, { headers: { "Cache-Control": "private, no-store" } })
           }
@@ -229,6 +267,7 @@ export async function GET(request: Request) {
             releaseDate: String(resource.releaseDate || ""),
             imdbRatingValue: String(resource.imdbRatingValue || ""),
             detailPath,
+            cast: normalizeMovieCast(resource),
           }
           let download: any
           try {
@@ -254,10 +293,11 @@ export async function GET(request: Request) {
               throw primaryError
             }
           }
+          const detailedSubject = await movieSubjectWithCast(subject, apiSubjectId || subjectId)
           return NextResponse.json({
             success: true,
-            subject,
-            ...resourceSources(download, subject),
+            subject: detailedSubject,
+            ...resourceSources(download, detailedSubject),
           }, { headers: { "Cache-Control": "private, no-store" } })
       }
       if (!isNumericSubject) throw new ProviderError("A task-only result needs its signed search result.")
@@ -272,20 +312,22 @@ export async function GET(request: Request) {
       const detailPath = suppliedPath || String(subject.detailPath || "")
       if (!detailPath) throw new ProviderError("Movie details did not include a resource path.")
       const download = await movieResourceResponse(subjectId, detailPath, season, episode)
+      const detailedSubject = suppliedPath ? await movieSubjectWithCast(subject, subjectId) : subject
       return NextResponse.json({
         success: true,
         subject: {
           subjectId,
-          title: String(subject.title || "Movie"),
-          cover: subject.cover?.url || subject.cover || "",
-          genre: subject.genre || "",
-          description: subject.description || "",
-          releaseDate: subject.releaseDate || "",
-          imdbRatingValue: subject.imdbRatingValue || "",
+          title: String(detailedSubject.title || "Movie"),
+          cover: detailedSubject.cover?.url || detailedSubject.cover || "",
+          genre: detailedSubject.genre || "",
+          description: detailedSubject.description || "",
+          releaseDate: detailedSubject.releaseDate || "",
+          imdbRatingValue: detailedSubject.imdbRatingValue || "",
           detailPath,
-          subjectType: subject.subjectType,
+          cast: normalizeMovieCast(detailedSubject),
+          subjectType: detailedSubject.subjectType,
         },
-        ...resourceSources(download, subject),
+        ...resourceSources(download, detailedSubject),
       }, { headers: { "Cache-Control": "private, no-store" } })
     }
     if (action === "resource") {

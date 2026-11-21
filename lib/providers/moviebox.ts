@@ -8,6 +8,7 @@ import { searchKamranSinhalasub } from "./kamran-movies"
 import { movieTaskRequest } from "./movie-tasks"
 import { probeMedia } from "./media-probe"
 import { cinebaseSearch } from "./cinebase"
+import { normalizeMovieCast } from "./moviebox-metadata"
 
 const API = "https://api.omegatech.app/api/movie/MovieBox-pro"
 const BACKUP = "https://moviebox-api-eight.vercel.app"
@@ -340,32 +341,57 @@ export async function movieSearch(query: string, page: number) {
   return value
 }
 
-export async function movieDetail(subjectId: string) {
+export async function movieDetail(subjectId: string, includeCast = true) {
   const cached = detailCache.get(subjectId)
-  if (cached && cached.expires > Date.now()) return cached.value
+  if (cached && cached.expires > Date.now()) {
+    if (!includeCast || normalizeMovieCast(cached.value).length) return cached.value
+    try {
+      const details = new URL(`${MOVIEBOX_API_3}/item-details`)
+      details.searchParams.set("subjectId", subjectId)
+      const cast = normalizeMovieCast(await providerJson(details.href, 8000))
+      if (cast.length) cached.value = { ...cached.value, cast }
+    } catch {}
+    return cached.value
+  }
   let subject: any
+  let primaryError: unknown
   try {
     const raw = await movieBoxJson({ action: "detail", subjectId })
     subject = raw?.data?.subject || raw?.subject || raw?.data || raw
-  } catch (primaryError) {
+  } catch (error) {
+    primaryError = error
+  }
+  if (!subject?.title && !subject?.subjectId) {
     try {
       const details = new URL(`${MOVIEBOX_API_3}/item-details`)
       details.searchParams.set("subjectId", subjectId)
       const raw = await providerJson(details.href, 12000)
       subject = raw?.data?.item || raw?.data?.subject || raw?.data || raw?.subject || raw
     } catch {
-      try {
-        const meta = await providerJson(`${METADATA}/detail?subjectId=${encodeURIComponent(subjectId)}`, 10000, metadataHeaders)
-        const path = meta?.data?.subject?.detailPath || meta?.data?.detailPath || ""
-        const raw = await providerJson(`${BACKUP}/detail/${encodeURIComponent(path || subjectId)}`, 12000)
-        subject = raw?.data?.subject || raw?.data || raw?.subject || raw
-      } catch {
-        throw primaryError
-      }
+      subject = null
+    }
+  }
+  if (!subject?.title && !subject?.subjectId) {
+    try {
+      const meta = await providerJson(`${METADATA}/detail?subjectId=${encodeURIComponent(subjectId)}`, 10000, metadataHeaders)
+      const path = meta?.data?.subject?.detailPath || meta?.data?.detailPath || ""
+      const raw = await providerJson(`${BACKUP}/detail/${encodeURIComponent(path || subjectId)}`, 12000)
+      subject = raw?.data?.subject || raw?.data || raw?.subject || raw
+    } catch {
+      throw primaryError || new ProviderError("Movie details were not found.", 404)
     }
   }
   if (!subject?.title && !subject?.subjectId) throw new ProviderError("Movie details were not found.", 404)
+  let cast = includeCast ? normalizeMovieCast(subject) : []
+  if (includeCast && !cast.length) {
+    try {
+      const details = new URL(`${MOVIEBOX_API_3}/item-details`)
+      details.searchParams.set("subjectId", subjectId)
+      cast = normalizeMovieCast(await providerJson(details.href, 8000))
+    } catch {}
+  }
   subject = { ...subject, subjectId: String(subject.subjectId || subject.subject_id || subjectId) }
+  if (cast.length) subject.cast = cast
   detailCache.set(subjectId, { expires: Date.now() + 60_000, value: subject })
   if (detailCache.size > 100) detailCache.delete(detailCache.keys().next().value!)
   return subject
@@ -373,7 +399,7 @@ export async function movieDetail(subjectId: string) {
 
 export async function movieResourceResponse(subjectId: string, detailPath: string, season = "0", episode = "0", taskId = "", taskParam = "taskId") {
   if (!detailPath && subjectId) {
-    const detail = await movieDetail(subjectId)
+    const detail = await movieDetail(subjectId, false)
     detailPath = String(detail.detailPath || detail.detail_path || detail.slug || "")
     if (!detailPath) throw new ProviderError("Movie details did not include a resource path.")
   }

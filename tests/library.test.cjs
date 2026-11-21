@@ -505,6 +505,26 @@ test("MovieBox API accepts an id alias and routes its episode identity to OmegaT
   assert.ok(data.sources[0].proxyDownload.startsWith("/api/media?key="))
   assert.ok(data.sources[0].proxyDownload.endsWith("&download=1"))
 })
+test("MovieBox metadata action returns actors without requiring a media resource",async()=>{
+  const subjectId="9876543210987654321"
+  const load=sandbox({},async input=>{
+    const url=new URL(String(input))
+    if(url.hostname==="api.omegatech.app"&&url.searchParams.get("action")==="detail"){
+      return Response.json({data:{subject:{subjectId,title:"Cast Fixture",detailPath:"cast-fixture"}}})
+    }
+    if(url.hostname==="movieboxapi-3xvk.vercel.app"&&url.pathname==="/api/item-details"){
+      return Response.json({data:{item:{cast:[{name:"Lead Actor",character:"Lead"}]}}})
+    }
+    throw new Error(`Unexpected metadata request: ${url.href}`)
+  })
+  const {GET}=load("app/api/moviebox/route.ts")
+  const response=await GET(new Request(`https://app.test/api/moviebox?action=metadata&subjectId=${subjectId}`))
+  const data=await response.json()
+  assert.equal(response.status,200)
+  assert.equal(data.success,true)
+  assert.equal(data.subject.title,"Cast Fixture")
+  assert.deepEqual(data.subject.cast,[{name:"Lead Actor",character:"Lead"}])
+})
 test("HLS manifests rewrite child media requests and cannot be saved as full-film MP4", async () => {
   const load = sandbox({ [path.resolve("lib/providers/media-url.ts")]: {
     allowedMediaUrl: input => new URL(input),

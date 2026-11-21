@@ -223,3 +223,51 @@ test("MovieBox homepage and popular searches normalize into discovery items", as
     global.fetch = originalFetch
   }
 })
+
+test("MovieBox cast metadata normalizes actor names, roles, and portrait URLs", () => {
+  const { normalizeMovieCast } = load("lib/providers/moviebox-metadata.ts")
+  const cast = normalizeMovieCast({
+    data: {
+      item: {
+        title: "Film",
+        credits: {
+          cast: [
+            { name: "Actor One", character: "Lead", profile_path: "https://images.example/actor-one.jpg" },
+            { actorName: "Actor Two", roleName: "Friend", avatar: "http://images.example/insecure.jpg" },
+            { name: "Crew Member", role: "Director", character: "Director" },
+            { name: "Actor One", character: "Duplicate" },
+          ],
+        },
+      },
+    },
+  })
+  assert.deepEqual(cast, [
+    { name: "Actor One", character: "Lead", profileUrl: "https://images.example/actor-one.jpg" },
+    { name: "Actor Two", character: "Friend" },
+  ])
+})
+
+test("Movie detail fills missing cast from the MovieBox item-details API", async () => {
+  const { movieDetail } = load("lib/providers/moviebox.ts")
+  const originalFetch = global.fetch
+  const subjectId = "9876543210987654321"
+  const calls = []
+  global.fetch = async input => {
+    const url = new URL(String(input))
+    calls.push(url)
+    if (url.hostname === "api.omegatech.app") {
+      return Response.json({ data: { subject: { subjectId, title: "Cast Fixture", detailPath: "cast-fixture" } } })
+    }
+    if (url.hostname === "movieboxapi-3xvk.vercel.app" && url.pathname === "/api/item-details") {
+      return Response.json({ data: { item: { cast: [{ name: "Lead Actor", character: "Lead" }] } } })
+    }
+    throw new Error(`Unexpected metadata request: ${url.href}`)
+  }
+  try {
+    const result = await movieDetail(subjectId)
+    assert.deepEqual(result.cast, [{ name: "Lead Actor", character: "Lead" }])
+    assert.ok(calls.some(url => url.hostname === "movieboxapi-3xvk.vercel.app" && url.pathname === "/api/item-details"))
+  } finally {
+    global.fetch = originalFetch
+  }
+})
